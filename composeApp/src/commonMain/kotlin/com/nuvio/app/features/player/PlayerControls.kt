@@ -125,7 +125,11 @@ internal fun PlayerControlsShell(
                     .align(Alignment.TopStart)
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
-                    .padding(horizontal = metrics.horizontalPadding, vertical = metrics.verticalPadding),
+                    .padding(
+                        start = metrics.horizontalPadding,
+                        end = metrics.horizontalPadding,
+                        top = metrics.verticalPadding / 4,
+                    ),
             )
 
             CenterControls(

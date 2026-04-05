@@ -53,9 +53,10 @@ object AddonRepository {
     private val activeRefreshJobs = mutableMapOf<String, Job>()
 
     fun initialize() {
+        val effectiveProfileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId)
         if (initialized) return
         initialized = true
-        currentProfileId = ProfileRepository.activeProfileId
+        currentProfileId = effectiveProfileId
         log.d { "initialize() — loading local addons for profile $currentProfileId" }
 
         val storedUrls = dedupeManifestUrls(AddonStorage.loadInstalledAddonUrls(currentProfileId))
@@ -78,9 +79,10 @@ object AddonRepository {
     }
 
     fun onProfileChanged(profileId: Int) {
-        if (profileId == currentProfileId && initialized) return
+        val effectiveProfileId = resolveEffectiveProfileId(profileId)
+        if (effectiveProfileId == currentProfileId && initialized) return
         cancelActiveRefreshes()
-        currentProfileId = profileId
+        currentProfileId = effectiveProfileId
         initialized = false
         pulledFromServer = false
         _uiState.value = AddonsUiState()
@@ -95,13 +97,13 @@ object AddonRepository {
     }
 
     suspend fun pullFromServer(profileId: Int) {
-        currentProfileId = profileId
+        currentProfileId = resolveEffectiveProfileId(profileId)
         log.i { "pullFromServer() — profileId=$profileId, initialized=$initialized, pulledFromServer=$pulledFromServer" }
         runCatching {
             val rows = SupabaseProvider.client.postgrest
                 .from("addons")
                 .select {
-                    filter { eq("profile_id", profileId) }
+                    filter { eq("profile_id", currentProfileId) }
                     order("sort_order", Order.ASCENDING)
                 }
                 .decodeList<AddonRow>()
@@ -111,10 +113,10 @@ object AddonRepository {
             urls.forEachIndexed { i, u -> log.d { "  server[$i]: $u" } }
 
             if (urls.isEmpty() && !pulledFromServer) {
-                val localUrls = AddonStorage.loadInstalledAddonUrls(profileId)
+                val localUrls = AddonStorage.loadInstalledAddonUrls(currentProfileId)
                 log.i { "pullFromServer() — server empty, local has ${localUrls.size} addons" }
                 if (localUrls.isNotEmpty()) {
-                    log.i { "pullFromServer() — migrating local addons to server for profile $profileId" }
+                    log.i { "pullFromServer() — migrating local addons to server for profile $currentProfileId" }
                     initialize()
                     pulledFromServer = true
                     val addons = localUrls.mapIndexed { index, addonUrl ->
@@ -127,11 +129,34 @@ object AddonRepository {
                         )
                     }
                     val params = buildJsonObject {
-                        put("p_profile_id", profileId)
+                        put("p_profile_id", currentProfileId)
                         put("p_addons", json.encodeToJsonElement(addons))
                     }
                     SupabaseProvider.client.postgrest.rpc("sync_push_addons", params)
                     log.i { "pullFromServer() — migration push done (${addons.size} addons)" }
+                    return
+                }
+            }
+
+            if (urls.isEmpty()) {
+                val localUrls = dedupeManifestUrls(AddonStorage.loadInstalledAddonUrls(currentProfileId))
+                if (localUrls.isNotEmpty()) {
+                    log.w { "pullFromServer() — remote empty while local has ${localUrls.size} addons; preserving local addons" }
+                    val existingByUrl = _uiState.value.addons.associateBy(ManagedAddon::manifestUrl)
+                    _uiState.value = AddonsUiState(
+                        addons = localUrls.map { url ->
+                            existingByUrl[url].toPendingAddon(url)
+                        },
+                    )
+                    persist()
+                    localUrls.forEach { url ->
+                        val existing = existingByUrl[url]
+                        if (existing == null || (existing.manifest == null && !existing.isRefreshing)) {
+                            refreshAddon(url)
+                        }
+                    }
+                    pulledFromServer = true
+                    initialized = true
                     return
                 }
             }
@@ -165,6 +190,9 @@ object AddonRepository {
     }
 
     suspend fun addAddon(rawUrl: String): AddAddonResult {
+        if (isUsingPrimaryAddonsFromSecondaryProfile()) {
+            return AddAddonResult.Error("This profile uses primary addons.")
+        }
         log.i { "addAddon() — rawUrl=$rawUrl" }
         val manifestUrl = try {
             normalizeManifestUrl(rawUrl)
@@ -204,6 +232,7 @@ object AddonRepository {
     }
 
     fun removeAddon(manifestUrl: String) {
+        if (isUsingPrimaryAddonsFromSecondaryProfile()) return
         log.i { "removeAddon() — $manifestUrl" }
         _uiState.update { current ->
             current.copy(
@@ -273,7 +302,10 @@ object AddonRepository {
     private fun pushToServer() {
         scope.launch {
             runCatching {
-                val profileId = ProfileRepository.activeProfileId
+                if (isUsingPrimaryAddonsFromSecondaryProfile()) {
+                    return@runCatching
+                }
+                val profileId = currentProfileId
                 val addons = _uiState.value.addons
                     .distinctBy { it.manifestUrl }
                     .mapIndexed { index, addon ->
@@ -324,6 +356,16 @@ object AddonRepository {
     private fun cancelActiveRefreshes() {
         activeRefreshJobs.values.forEach(Job::cancel)
         activeRefreshJobs.clear()
+    }
+
+    private fun resolveEffectiveProfileId(profileId: Int): Int {
+        val active = ProfileRepository.state.value.activeProfile
+        return if (active != null && active.profileIndex != 1 && active.usesPrimaryAddons) 1 else profileId
+    }
+
+    private fun isUsingPrimaryAddonsFromSecondaryProfile(): Boolean {
+        val active = ProfileRepository.state.value.activeProfile
+        return active != null && active.profileIndex != 1 && active.usesPrimaryAddons
     }
 }
 

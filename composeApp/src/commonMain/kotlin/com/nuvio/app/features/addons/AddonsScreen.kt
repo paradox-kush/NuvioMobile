@@ -85,10 +85,7 @@ internal fun AddonsSettingsPageContent(
     var formMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var installModalState by remember { mutableStateOf<AddonInstallModalState?>(null) }
 
-    val sortedAddons = remember(uiState.addons) {
-        uiState.addons.sortedBy { it.displayTitle.lowercase() }
-    }
-    val overview = remember(sortedAddons) { sortedAddons.toOverview() }
+    val overview = remember(uiState.addons) { uiState.addons.toOverview() }
 
     Column(
         modifier = modifier,
@@ -131,10 +128,10 @@ internal fun AddonsSettingsPageContent(
         )
 
         SectionHeader("INSTALLED ADDONS")
-        if (sortedAddons.isEmpty()) {
+        if (uiState.addons.isEmpty()) {
             EmptyStateCard()
         } else {
-            sortedAddons.forEach { addon ->
+            uiState.addons.forEach { addon ->
                 InstalledAddonCard(
                     addon = addon,
                     onRefreshClick = { AddonRepository.refreshAddon(addon.manifestUrl) },
