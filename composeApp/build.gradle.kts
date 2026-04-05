@@ -143,6 +143,7 @@ val iosDistributionSourceDir = if (iosDistribution == "full") {
 } else {
     "src/iosAppStore/kotlin"
 }
+val fullCommonSourceDir = project.file("src/fullCommonMain/kotlin")
 val generatedRuntimeConfigDir = layout.buildDirectory.dir("generated/runtime-config/kotlin")
 
 val generateRuntimeConfigs = tasks.register<GenerateRuntimeConfigsTask>("generateRuntimeConfigs") {
@@ -177,6 +178,9 @@ kotlin {
                 }
             }
 
+            if (iosDistribution == "full") {
+                defaultSourceSet.kotlin.srcDir(fullCommonSourceDir)
+            }
             defaultSourceSet.kotlin.srcDir(project.file(iosDistributionSourceDir))
             defaultSourceSet.dependencies {
                 implementation(libs.ktor.client.darwin)
@@ -292,6 +296,9 @@ android {
         create("playstore") {
             dimension = "distribution"
         }
+    }
+    sourceSets.getByName("full") {
+        java.srcDir(fullCommonSourceDir)
     }
     packaging {
         resources {
