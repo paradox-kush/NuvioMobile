@@ -2,8 +2,6 @@
 <resources>
     <style name="Theme.Nuvio" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/nuvio_background</item>
-        <item name="android:navigationBarColor">@color/nuvio_background</item>
-        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
     <style name="Theme.Nuvio.Splash" parent="@style/Theme.Nuvio" />

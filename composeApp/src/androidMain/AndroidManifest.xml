@@ -14,6 +14,8 @@
         <activity
             android:exported="true"
             android:name=".MainActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
+            android:supportsPictureInPicture="true"
             android:theme="@style/Theme.Nuvio.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

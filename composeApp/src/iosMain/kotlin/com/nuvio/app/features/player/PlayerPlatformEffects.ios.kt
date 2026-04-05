@@ -3,6 +3,7 @@ package com.nuvio.app.features.player
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.unit.IntSize
 import platform.Foundation.NSNotificationCenter
 import platform.MediaPlayer.MPVolumeView
 import platform.UIKit.UIApplication
@@ -40,6 +41,12 @@ actual fun EnterImmersivePlayerMode() {
         }
     }
 }
+
+@Composable
+actual fun ManagePlayerPictureInPicture(
+    isPlaying: Boolean,
+    playerSize: IntSize,
+) = Unit
 
 @Composable
 actual fun rememberPlayerGestureController(): PlayerGestureController? {

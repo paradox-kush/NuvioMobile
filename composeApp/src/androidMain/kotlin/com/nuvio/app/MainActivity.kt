@@ -7,7 +7,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.SystemBarStyle
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import androidx.core.view.WindowCompat
 import com.nuvio.app.core.auth.AuthStorage
 import com.nuvio.app.core.deeplink.handleAppUrl
 import com.nuvio.app.core.storage.PlatformLocalAccountDataCleaner
@@ -19,6 +18,7 @@ import com.nuvio.app.features.mdblist.MdbListSettingsStorage
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationPlatform
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsStorage
 import com.nuvio.app.features.player.PlayerSettingsStorage
+import com.nuvio.app.features.player.PlayerPictureInPictureManager
 import com.nuvio.app.features.plugins.PluginStorage
 import com.nuvio.app.features.profiles.ProfileStorage
 import com.nuvio.app.features.details.SeasonViewModeStorage
@@ -42,9 +42,6 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawableResource(R.color.nuvio_background)
-        window.navigationBarColor = getColor(R.color.nuvio_background)
-        window.isNavigationBarContrastEnforced = false
-        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = false
         AddonStorage.initialize(applicationContext)
         AuthStorage.initialize(applicationContext)
         LibraryStorage.initialize(applicationContext)
@@ -79,6 +76,11 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIncomingAppIntent(intent)
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        PlayerPictureInPictureManager.onUserLeaveHint(this)
     }
 
     override fun onDestroy() {

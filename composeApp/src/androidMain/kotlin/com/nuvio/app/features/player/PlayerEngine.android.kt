@@ -1,9 +1,13 @@
 package com.nuvio.app.features.player
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.net.Uri
 import android.util.Log
 import android.util.TypedValue
 import android.graphics.Typeface
+import android.os.Build
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -195,10 +199,17 @@ actual fun PlatformPlayerSurface(
     }
 
     DisposableEffect(exoPlayer, lifecycleOwner) {
+        val activity = context.findActivity()
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> exoPlayer.playWhenReady = playWhenReady
-                Lifecycle.Event.ON_STOP -> exoPlayer.pause()
+                Lifecycle.Event.ON_STOP -> {
+                    val isInPictureInPicture =
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && activity?.isInPictureInPictureMode == true
+                    if (!isInPictureInPicture) {
+                        exoPlayer.pause()
+                    }
+                }
                 else -> Unit
             }
         }
@@ -387,6 +398,13 @@ actual fun PlatformPlayerSurface(
         },
     )
 }
+
+private tailrec fun Context.findActivity(): Activity? =
+    when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
 
 private fun ExoPlayer.snapshot(): PlayerPlaybackSnapshot =
     PlayerPlaybackSnapshot(

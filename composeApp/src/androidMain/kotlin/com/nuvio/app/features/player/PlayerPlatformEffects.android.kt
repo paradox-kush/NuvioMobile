@@ -5,11 +5,14 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
+import android.os.Build
 import android.provider.Settings
 import android.view.WindowManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -19,6 +22,7 @@ import kotlin.math.roundToInt
 @Composable
 actual fun LockPlayerToLandscape() {
     val activity = LocalContext.current.findActivity() ?: return
+    if (!activity.shouldForceLandscapePlayer()) return
 
     DisposableEffect(activity) {
         val previousOrientation = activity.requestedOrientation
@@ -51,6 +55,29 @@ actual fun EnterImmersivePlayerMode() {
 }
 
 @Composable
+actual fun ManagePlayerPictureInPicture(
+    isPlaying: Boolean,
+    playerSize: IntSize,
+) {
+    val activity = LocalContext.current.findActivity() ?: return
+
+    DisposableEffect(activity) {
+        onDispose {
+            PlayerPictureInPictureManager.clearSession(activity)
+        }
+    }
+
+    SideEffect {
+        PlayerPictureInPictureManager.updateSession(
+            activity = activity,
+            isActive = true,
+            isPlaying = isPlaying,
+            playerSize = playerSize,
+        )
+    }
+}
+
+@Composable
 actual fun rememberPlayerGestureController(): PlayerGestureController? {
     val context = LocalContext.current
     val activity = context.findActivity() ?: return null
@@ -78,6 +105,12 @@ private tailrec fun Context.findActivity(): Activity? =
         is ContextWrapper -> baseContext.findActivity()
         else -> null
     }
+
+private fun Activity.shouldForceLandscapePlayer(): Boolean {
+    if (resources.configuration.smallestScreenWidthDp >= 600) return false
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInMultiWindowMode) return false
+    return true
+}
 
 private class AndroidPlayerGestureController(
     private val activity: Activity,

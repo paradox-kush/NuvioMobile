@@ -203,6 +203,11 @@ fun PlayerScreen(
         var nextEpisodeAutoPlayCountdown by remember { mutableStateOf<Int?>(null) }
         var nextEpisodeAutoPlayJob by remember { mutableStateOf<Job?>(null) }
 
+        ManagePlayerPictureInPicture(
+            isPlaying = playbackSnapshot.isPlaying,
+            playerSize = layoutSize,
+        )
+
         val playbackSession = remember(
             contentType,
             parentMetaId,

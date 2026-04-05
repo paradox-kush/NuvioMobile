@@ -1,6 +1,7 @@
 package com.nuvio.app.features.player
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.IntSize
 
 interface PlayerGestureController {
     fun currentBrightness(): Float?
@@ -19,6 +20,12 @@ expect fun LockPlayerToLandscape()
 
 @Composable
 expect fun EnterImmersivePlayerMode()
+
+@Composable
+expect fun ManagePlayerPictureInPicture(
+    isPlaying: Boolean,
+    playerSize: IntSize,
+)
 
 @Composable
 expect fun rememberPlayerGestureController(): PlayerGestureController?
