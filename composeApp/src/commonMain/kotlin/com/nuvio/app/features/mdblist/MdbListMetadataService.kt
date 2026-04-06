@@ -39,21 +39,32 @@ object MdbListMetadataService {
     private val ratingsCache = mutableMapOf<String, List<MetaExternalRating>>()
     private val imdbRegex = Regex("tt\\d+")
 
+    fun shouldFetchForMeta(
+        meta: MetaDetails,
+        fallbackItemId: String,
+        settings: MdbListSettings,
+    ): Boolean {
+        if (!settings.enabled) return false
+        if (settings.apiKey.trim().isBlank()) return false
+        if (settings.enabledProvidersInPriorityOrder().isEmpty()) return false
+        return extractImdbId(meta.id) != null || extractImdbId(fallbackItemId) != null
+    }
+
     suspend fun enrichMeta(
         meta: MetaDetails,
         fallbackItemId: String,
         settings: MdbListSettings,
     ): MetaDetails {
-        if (!settings.enabled) return meta.copy(externalRatings = emptyList())
+        if (!shouldFetchForMeta(meta, fallbackItemId, settings)) {
+            return meta.copy(externalRatings = emptyList())
+        }
         val apiKey = settings.apiKey.trim()
-        if (apiKey.isBlank()) return meta.copy(externalRatings = emptyList())
 
         val imdbId = extractImdbId(meta.id)
             ?: extractImdbId(fallbackItemId)
             ?: return meta.copy(externalRatings = emptyList())
         val mediaType = toMdbListMediaType(meta.type)
         val enabledProviders = settings.enabledProvidersInPriorityOrder()
-        if (enabledProviders.isEmpty()) return meta.copy(externalRatings = emptyList())
 
         val ratings = fetchRatings(
             imdbId = imdbId,

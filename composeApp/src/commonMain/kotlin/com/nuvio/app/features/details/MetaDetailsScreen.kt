@@ -105,7 +105,8 @@ fun MetaDetailsScreen(
     modifier: Modifier = Modifier,
 ) {
     val uiState by MetaDetailsRepository.uiState.collectAsStateWithLifecycle()
-    val displayedMeta = MetaDetailsRepository.peek(type, id)
+    val displayedMeta = uiState.meta?.takeIf { it.type == type && it.id == id }
+        ?: MetaDetailsRepository.peek(type, id)
     val metaScreenSettingsUiState by remember {
         MetaScreenSettingsRepository.ensureLoaded()
         MetaScreenSettingsRepository.uiState

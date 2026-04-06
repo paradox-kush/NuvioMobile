@@ -62,7 +62,9 @@ fun DetailMetaInfo(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         val releaseLine = formatMetaReleaseLineForDetails(meta)
