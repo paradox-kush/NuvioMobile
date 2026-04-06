@@ -7,14 +7,17 @@ import com.nuvio.app.features.addons.httpPostJsonWithHeaders
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.library.LibraryItem
 import com.nuvio.app.features.tmdb.TmdbService
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -33,6 +36,7 @@ private const val PERSONAL_LIST_PREFIX = "trakt:list:"
 private const val METADATA_FETCH_TIMEOUT_MS = 3_500L
 private const val METADATA_FETCH_CONCURRENCY = 5
 private const val SNAPSHOT_CACHE_TTL_MS = 60_000L
+private const val LIST_TABS_CACHE_TTL_MS = 60_000L
 
 data class TraktLibraryUiState(
     val listTabs: List<TraktListTab> = emptyList(),
@@ -46,6 +50,7 @@ data class TraktLibraryUiState(
 object TraktLibraryRepository {
     private val log = Logger.withTag("TraktLibrary")
     private val json = Json { ignoreUnknownKeys = true }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val _uiState = MutableStateFlow(TraktLibraryUiState())
     val uiState: StateFlow<TraktLibraryUiState> = _uiState.asStateFlow()
@@ -53,20 +58,37 @@ object TraktLibraryRepository {
     private var hasLoaded = false
     private val refreshMutex = Mutex()
     private var lastRefreshAtMs: Long = 0L
+    private var lastListTabsRefreshAtMs: Long = 0L
 
     fun ensureLoaded() {
         if (hasLoaded) return
         hasLoaded = true
     }
 
+    fun preloadListTabsAsync() {
+        if (!TraktAuthRepository.isAuthenticated.value) return
+        if (_uiState.value.listTabs.isNotEmpty()) return
+        scope.launch {
+            runCatching { preloadListTabs() }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    log.w { "Failed to preload Trakt list tabs: ${error.message}" }
+                }
+        }
+    }
+
     fun onProfileChanged() {
         hasLoaded = false
+        lastRefreshAtMs = 0L
+        lastListTabsRefreshAtMs = 0L
         _uiState.value = TraktLibraryUiState()
         ensureLoaded()
     }
 
     fun clearLocalState() {
         hasLoaded = false
+        lastRefreshAtMs = 0L
+        lastListTabsRefreshAtMs = 0L
         _uiState.value = TraktLibraryUiState()
     }
 
@@ -83,6 +105,21 @@ object TraktLibraryRepository {
 
     suspend fun ensureFresh() {
         refresh(force = false)
+    }
+
+    private suspend fun preloadListTabs() {
+        ensureLoaded()
+        refreshMutex.withLock {
+            if (_uiState.value.listTabs.isNotEmpty()) return
+
+            val headers = TraktAuthRepository.authorizedHeaders() ?: return
+            val tabs = fetchListTabs(headers)
+            _uiState.value = _uiState.value.copy(
+                listTabs = tabs,
+                errorMessage = null,
+            )
+            lastListTabsRefreshAtMs = TraktPlatformClock.nowEpochMs()
+        }
     }
 
     private suspend fun refresh(force: Boolean) {
@@ -107,6 +144,7 @@ object TraktLibraryRepository {
             if (headers == null) {
                 _uiState.value = TraktLibraryUiState()
                 lastRefreshAtMs = 0L
+                lastListTabsRefreshAtMs = 0L
                 return
             }
 
@@ -280,21 +318,23 @@ object TraktLibraryRepository {
     }
 
     private suspend fun fetchSnapshot(headers: Map<String, String>): TraktLibraryUiState = withContext(Dispatchers.Default) {
-        val watchlistTabs = listOf(
-            TraktListTab(
-                key = WATCHLIST_KEY,
-                title = "Watchlist",
-                type = TraktListType.WATCHLIST,
-            ),
-        )
-
-        val personalLists = fetchPersonalLists(headers)
-        val allTabs = watchlistTabs + personalLists
+        val now = TraktPlatformClock.nowEpochMs()
+        val cachedTabs = _uiState.value.listTabs
+        val allTabs = if (
+            cachedTabs.isNotEmpty() &&
+            now - lastListTabsRefreshAtMs <= LIST_TABS_CACHE_TTL_MS
+        ) {
+            cachedTabs
+        } else {
+            fetchListTabs(headers).also {
+                lastListTabsRefreshAtMs = now
+            }
+        }
 
         val entriesByList = linkedMapOf<String, List<LibraryItem>>()
         entriesByList[WATCHLIST_KEY] = fetchWatchlistItems(headers)
 
-        personalLists.forEach { tab ->
+        allTabs.filter { it.type == TraktListType.PERSONAL }.forEach { tab ->
             val listId = tab.traktListId?.toString() ?: return@forEach
             entriesByList[tab.key] = fetchPersonalListItems(headers, listId)
         }
@@ -321,6 +361,17 @@ object TraktLibraryRepository {
             allItems = allItems,
             membershipByContent = membershipByContent.mapValues { it.value.toSet() },
         )
+    }
+
+    private suspend fun fetchListTabs(headers: Map<String, String>): List<TraktListTab> {
+        val watchlistTabs = listOf(
+            TraktListTab(
+                key = WATCHLIST_KEY,
+                title = "Watchlist",
+                type = TraktListType.WATCHLIST,
+            ),
+        )
+        return watchlistTabs + fetchPersonalLists(headers)
     }
 
     private suspend fun hydrateEntriesFromAddonMeta(

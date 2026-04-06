@@ -1106,7 +1106,7 @@ private fun MainAppContent(
             NuvioPosterActionSheet(
                 item = selectedPosterForActions,
                 isSaved = selectedPosterForActions?.let { preview ->
-                    LibraryRepository.isSaved(preview.id)
+                    LibraryRepository.isSaved(preview.id, preview.type)
                 } == true,
                 isWatched = selectedPosterForActions?.let { preview ->
                     WatchingState.isPosterWatched(
@@ -1123,9 +1123,12 @@ private fun MainAppContent(
                         } else {
                             pickerItem = libraryItem
                             pickerTitle = preview.name
+                            pickerTabs = LibraryRepository.traktListTabs()
+                            pickerMembership = pickerTabs.associate { it.key to false }
+                            pickerPending = true
+                            pickerError = null
+                            showLibraryListPicker = true
                             coroutineScope.launch {
-                                pickerPending = true
-                                pickerError = null
                                 runCatching {
                                     val snapshot = LibraryRepository.getMembershipSnapshot(libraryItem)
                                     val tabs = LibraryRepository.traktListTabs()
@@ -1133,7 +1136,6 @@ private fun MainAppContent(
                                     pickerMembership = tabs.associate { tab ->
                                         tab.key to (snapshot[tab.key] == true)
                                     }
-                                    showLibraryListPicker = true
                                 }.onFailure { error ->
                                     pickerError = error.message ?: "Failed to load Trakt lists"
                                 }

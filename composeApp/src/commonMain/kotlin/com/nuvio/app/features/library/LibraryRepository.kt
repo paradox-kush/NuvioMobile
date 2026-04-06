@@ -64,6 +64,7 @@ object LibraryRepository {
         syncScope.launch {
             TraktAuthRepository.isAuthenticated.collectLatest { authenticated ->
                 if (authenticated) {
+                    TraktLibraryRepository.preloadListTabsAsync()
                     runCatching { TraktLibraryRepository.refreshNow() }
                         .onFailure { log.e(it) { "Failed to refresh Trakt library after auth change" } }
                 }
@@ -85,6 +86,7 @@ object LibraryRepository {
         if (hasLoaded) return
         loadFromDisk(ProfileRepository.activeProfileId)
         if (TraktAuthRepository.isAuthenticated.value) {
+            TraktLibraryRepository.preloadListTabsAsync()
             refreshTraktLibraryAsync()
         }
     }
@@ -95,6 +97,7 @@ object LibraryRepository {
         TraktAuthRepository.onProfileChanged()
         TraktLibraryRepository.onProfileChanged()
         if (TraktAuthRepository.isAuthenticated.value) {
+            TraktLibraryRepository.preloadListTabsAsync()
             refreshTraktLibraryAsync()
         }
     }
@@ -189,10 +192,13 @@ object LibraryRepository {
         }
     }
 
-    fun isSaved(id: String): Boolean {
+    fun isSaved(id: String, type: String? = null): Boolean {
         ensureLoaded()
 
         if (TraktAuthRepository.isAuthenticated.value) {
+            if (type != null) {
+                return TraktLibraryRepository.isInAnyList(id, type)
+            }
             val entry = TraktLibraryRepository.uiState.value.allItems.firstOrNull { it.id == id }
             if (entry != null) {
                 return TraktLibraryRepository.isInAnyList(entry.id, entry.type)
