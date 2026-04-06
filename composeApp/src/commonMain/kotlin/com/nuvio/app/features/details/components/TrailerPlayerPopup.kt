@@ -170,6 +170,7 @@ fun TrailerPlayerPopup(
                         PlatformPlayerSurface(
                             sourceUrl = playbackSource.videoUrl,
                             sourceAudioUrl = playbackSource.audioUrl,
+                            useYoutubeChunkedPlayback = true,
                             modifier = Modifier.fillMaxWidth(),
                             playWhenReady = true,
                             resizeMode = PlayerResizeMode.Fit,

@@ -40,6 +40,7 @@ expect fun PlatformPlayerSurface(
     sourceUrl: String,
     sourceAudioUrl: String? = null,
     sourceHeaders: Map<String, String> = emptyMap(),
+    useYoutubeChunkedPlayback: Boolean = false,
     modifier: Modifier = Modifier,
     playWhenReady: Boolean = true,
     resizeMode: PlayerResizeMode = PlayerResizeMode.Fit,

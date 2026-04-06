@@ -63,6 +63,7 @@ actual fun PlatformPlayerSurface(
     sourceUrl: String,
     sourceAudioUrl: String?,
     sourceHeaders: Map<String, String>,
+    useYoutubeChunkedPlayback: Boolean,
     modifier: Modifier,
     playWhenReady: Boolean,
     resizeMode: PlayerResizeMode,
@@ -116,7 +117,10 @@ actual fun PlatformPlayerSurface(
             .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
 
         val mediaSourceFactory = DefaultMediaSourceFactory(
-            PlatformPlaybackDataSourceFactory.create(defaultRequestHeaders = sanitizedSourceHeaders),
+            PlatformPlaybackDataSourceFactory.create(
+                defaultRequestHeaders = sanitizedSourceHeaders,
+                useYoutubeChunkedPlayback = useYoutubeChunkedPlayback,
+            ),
             extractorsFactory,
         )
 
