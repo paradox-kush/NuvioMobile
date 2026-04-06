@@ -317,7 +317,7 @@ private fun ContinueWatchingPosterCard(
                 )
                 .posterCardClickable(onClick = onClick, onLongClick = onLongClick),
         ) {
-            val imageUrl = item.imageUrl
+            val imageUrl = item.poster ?: item.imageUrl
             if (imageUrl != null) {
                 AsyncImage(
                     model = imageUrl,
