@@ -824,6 +824,7 @@ private fun MainAppContent(
 
                     // Reuse Last Link: auto-play from cache if enabled (only on first entry)
                     var reuseHandled by rememberSaveable(route.videoId, effectiveVideoId) { mutableStateOf(false) }
+                    var reuseNavigated by remember { mutableStateOf(false) }
                     LaunchedEffect(effectiveVideoId, hasResolvedVideoId, playerSettings.streamReuseLastLinkEnabled) {
                         if (!hasResolvedVideoId) return@LaunchedEffect
                         if (reuseHandled) return@LaunchedEffect
@@ -833,6 +834,8 @@ private fun MainAppContent(
                         val maxAgeMs = playerSettings.streamReuseLastLinkCacheHours * 60L * 60L * 1000L
                         val cached = StreamLinkCacheRepository.getValid(cacheKey, maxAgeMs)
                         if (cached != null) {
+                            reuseNavigated = true
+                            StreamsRepository.clear()
                             val launchId = PlayerLaunchStore.put(
                                 PlayerLaunch(
                                     title = route.title,
@@ -868,6 +871,7 @@ private fun MainAppContent(
                     var autoPlayHandled by rememberSaveable(route.videoId, effectiveVideoId) { mutableStateOf(false) }
                     LaunchedEffect(streamsUiState.autoPlayStream, reuseHandled) {
                         if (!reuseHandled) return@LaunchedEffect
+                        if (reuseNavigated) return@LaunchedEffect
                         if (autoPlayHandled) return@LaunchedEffect
                         val stream = streamsUiState.autoPlayStream ?: return@LaunchedEffect
                         val sourceUrl = stream.directPlaybackUrl ?: return@LaunchedEffect
