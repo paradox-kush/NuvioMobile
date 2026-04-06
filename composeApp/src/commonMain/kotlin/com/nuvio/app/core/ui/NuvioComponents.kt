@@ -105,6 +105,7 @@ fun NuvioSurfaceCard(
 fun NuvioScreenHeader(
     title: String,
     modifier: Modifier = Modifier,
+    includeStatusBarPadding: Boolean = true,
     onBack: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
@@ -113,7 +114,7 @@ fun NuvioScreenHeader(
         modifier = modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.background)
-            .padding(top = statusBarTop, bottom = 4.dp),
+            .padding(top = if (includeStatusBarPadding) statusBarTop else 0.dp, bottom = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Bottom,
     ) {

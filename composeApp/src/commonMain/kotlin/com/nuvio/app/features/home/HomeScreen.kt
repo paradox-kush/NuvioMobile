@@ -37,6 +37,8 @@ import com.nuvio.app.features.watchprogress.toUpNextContinueWatchingItem
 import com.nuvio.app.features.watching.application.WatchingState
 import com.nuvio.app.features.watching.domain.WatchingContentRef
 import com.nuvio.app.features.watching.domain.buildPlaybackVideoId
+import com.nuvio.app.features.collection.CollectionRepository
+import com.nuvio.app.features.home.components.HomeCollectionRowSection
 import com.nuvio.app.features.watching.domain.isReleasedBy
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -51,10 +53,12 @@ fun HomeScreen(
     onPosterLongClick: ((MetaPreview) -> Unit)? = null,
     onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
+    onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
     onFirstCatalogRendered: (() -> Unit)? = null,
 ) {
     LaunchedEffect(Unit) {
         AddonRepository.initialize()
+        CollectionRepository.initialize()
         ContinueWatchingPreferencesRepository.ensureLoaded()
         WatchedRepository.ensureLoaded()
         WatchProgressRepository.ensureLoaded()
@@ -63,6 +67,7 @@ fun HomeScreen(
     val addonsUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
     val homeUiState by HomeRepository.uiState.collectAsStateWithLifecycle()
     val homeSettingsUiState by HomeCatalogSettingsRepository.uiState.collectAsStateWithLifecycle()
+    val collections by CollectionRepository.collections.collectAsStateWithLifecycle()
     val continueWatchingPreferences by ContinueWatchingPreferencesRepository.uiState.collectAsStateWithLifecycle()
     val watchedUiState by WatchedRepository.uiState.collectAsStateWithLifecycle()
     val watchProgressUiState by WatchProgressRepository.uiState.collectAsStateWithLifecycle()
@@ -343,6 +348,20 @@ fun HomeScreen(
                         )
                     }
                 }
+                // Pin-to-top collection rows
+                val pinnedCollections = collections.filter { it.pinToTop && it.folders.isNotEmpty() }
+                val unpinnedCollections = collections.filter { !it.pinToTop && it.folders.isNotEmpty() }
+
+                pinnedCollections.forEach { collection ->
+                    item(key = "collection_${collection.id}") {
+                        HomeCollectionRowSection(
+                            collection = collection,
+                            modifier = Modifier.padding(bottom = 12.dp),
+                            onFolderClick = onFolderClick,
+                        )
+                    }
+                }
+
                 items(
                     count = homeUiState.sections.size,
                     key = { index -> homeUiState.sections[index].key },
@@ -361,6 +380,17 @@ fun HomeScreen(
                         onPosterClick = onPosterClick,
                         onPosterLongClick = onPosterLongClick,
                     )
+                }
+
+                // Unpinned collection rows after catalog sections
+                unpinnedCollections.forEach { collection ->
+                    item(key = "collection_${collection.id}") {
+                        HomeCollectionRowSection(
+                            collection = collection,
+                            modifier = Modifier.padding(bottom = 12.dp),
+                            onFolderClick = onFolderClick,
+                        )
+                    }
                 }
             }
         }

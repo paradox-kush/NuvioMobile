@@ -67,6 +67,7 @@ fun SettingsScreen(
     onAddonsClick: () -> Unit = {},
     onPluginsClick: () -> Unit = {},
     onAccountClick: () -> Unit = {},
+    onCollectionsClick: () -> Unit = {},
 ) {
     BoxWithConstraints(
         modifier = modifier
@@ -176,6 +177,7 @@ fun SettingsScreen(
                 metaScreenSettingsUiState = metaScreenSettingsUiState,
                 continueWatchingPreferencesUiState = continueWatchingPreferencesUiState,
                 onSwitchProfile = onSwitchProfile,
+                onCollectionsClick = onCollectionsClick,
             )
         } else {
             MobileSettingsScreen(
@@ -211,6 +213,7 @@ fun SettingsScreen(
                 onAddonsClick = onAddonsClick,
                 onPluginsClick = onPluginsClick,
                 onAccountClick = onAccountClick,
+                onCollectionsClick = onCollectionsClick,
             )
         }
     }
@@ -250,6 +253,7 @@ private fun MobileSettingsScreen(
     onAddonsClick: () -> Unit = {},
     onPluginsClick: () -> Unit = {},
     onAccountClick: () -> Unit = {},
+    onCollectionsClick: () -> Unit = {},
 ) {
     NuvioScreen {
         stickyHeader {
@@ -313,6 +317,7 @@ private fun MobileSettingsScreen(
                 onPluginsClick = onPluginsClick,
                 onHomescreenClick = onHomescreenClick,
                 onMetaScreenClick = onMetaScreenClick,
+                onCollectionsClick = onCollectionsClick,
             )
             SettingsPage.Addons -> addonsSettingsContent()
             SettingsPage.Plugins -> if (AppFeaturePolicy.pluginsEnabled) pluginsSettingsContent() else addonsSettingsContent()
@@ -376,6 +381,7 @@ private fun TabletSettingsScreen(
     metaScreenSettingsUiState: MetaScreenSettingsUiState,
     continueWatchingPreferencesUiState: ContinueWatchingPreferencesUiState,
     onSwitchProfile: (() -> Unit)? = null,
+    onCollectionsClick: () -> Unit = {},
 ) {
     var selectedCategory by rememberSaveable { mutableStateOf(SettingsCategory.General.name) }
     val activeCategory = SettingsCategory.valueOf(selectedCategory)
@@ -508,6 +514,7 @@ private fun TabletSettingsScreen(
                     onPluginsClick = { openInlinePage(SettingsPage.Plugins) },
                     onHomescreenClick = { openInlinePage(SettingsPage.Homescreen) },
                     onMetaScreenClick = { openInlinePage(SettingsPage.MetaScreen) },
+                    onCollectionsClick = onCollectionsClick,
                 )
                 SettingsPage.Addons -> addonsSettingsContent()
                 SettingsPage.Plugins -> if (AppFeaturePolicy.pluginsEnabled) pluginsSettingsContent() else addonsSettingsContent()

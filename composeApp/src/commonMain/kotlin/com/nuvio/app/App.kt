@@ -116,6 +116,12 @@ import com.nuvio.app.features.settings.AddonsSettingsScreen
 import com.nuvio.app.features.settings.PluginsSettingsScreen
 import com.nuvio.app.features.settings.AccountSettingsScreen
 import com.nuvio.app.features.settings.ThemeSettingsRepository
+import com.nuvio.app.features.collection.CollectionManagementScreen
+import com.nuvio.app.features.collection.CollectionEditorScreen
+import com.nuvio.app.features.collection.CollectionEditorRepository
+import com.nuvio.app.features.collection.CollectionSyncService
+import com.nuvio.app.features.collection.FolderDetailScreen
+import com.nuvio.app.features.collection.FolderDetailRepository
 import com.nuvio.app.features.streams.StreamContext
 import com.nuvio.app.features.streams.StreamContextStore
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
@@ -176,6 +182,15 @@ object PluginsSettingsRoute
 
 @Serializable
 object AccountSettingsRoute
+
+@Serializable
+object CollectionsRoute
+
+@Serializable
+data class CollectionEditorRoute(val collectionId: String? = null)
+
+@Serializable
+data class FolderDetailRoute(val collectionId: String, val folderId: String)
 
 @Serializable
 data class StreamRoute(
@@ -363,6 +378,9 @@ private fun MainAppContent(
         val navController = rememberNavController()
         remember {
             EpisodeReleaseNotificationsRepository.ensureLoaded()
+        }
+        remember {
+            CollectionSyncService.startObserving()
         }
         val hapticFeedback = LocalHapticFeedback.current
         val coroutineScope = rememberCoroutineScope()
@@ -616,6 +634,10 @@ private fun MainAppContent(
                                         }
                                     },
                                     onAccountSettingsClick = { navController.navigate(AccountSettingsRoute) },
+                                    onCollectionsSettingsClick = { navController.navigate(CollectionsRoute) },
+                                    onFolderClick = { collectionId, folderId ->
+                                        navController.navigate(FolderDetailRoute(collectionId = collectionId, folderId = folderId))
+                                    },
                                     onInitialHomeContentRendered = { initialHomeReady = true },
                                 )
 
@@ -1105,6 +1127,40 @@ private fun MainAppContent(
                         onBack = { navController.popBackStack() },
                     )
                 }
+                composable<CollectionsRoute> {
+                    CollectionManagementScreen(
+                        onBack = { navController.popBackStack() },
+                        onNavigateToEditor = { collectionId ->
+                            navController.navigate(CollectionEditorRoute(collectionId = collectionId))
+                        },
+                    )
+                }
+                composable<CollectionEditorRoute> { backStackEntry ->
+                    val route = backStackEntry.toRoute<CollectionEditorRoute>()
+                    CollectionEditorScreen(
+                        collectionId = route.collectionId,
+                        onBack = {
+                            CollectionEditorRepository.clear()
+                            navController.popBackStack()
+                        },
+                    )
+                }
+                composable<FolderDetailRoute> { backStackEntry ->
+                    val route = backStackEntry.toRoute<FolderDetailRoute>()
+                    LaunchedEffect(route.collectionId, route.folderId) {
+                        FolderDetailRepository.initialize(route.collectionId, route.folderId)
+                    }
+                    FolderDetailScreen(
+                        onBack = {
+                            FolderDetailRepository.clear()
+                            navController.popBackStack()
+                        },
+                        onCatalogClick = onCatalogClick,
+                        onPosterClick = { meta ->
+                            navController.navigate(DetailRoute(type = meta.type, id = meta.id))
+                        },
+                    )
+                }
             }
 
             NuvioPosterActionSheet(
@@ -1235,6 +1291,8 @@ private fun AppTabHost(
     onAddonsSettingsClick: () -> Unit = {},
     onPluginsSettingsClick: () -> Unit = {},
     onAccountSettingsClick: () -> Unit = {},
+    onCollectionsSettingsClick: () -> Unit = {},
+    onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
     onInitialHomeContentRendered: () -> Unit = {},
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -1248,6 +1306,7 @@ private fun AppTabHost(
                 onPosterLongClick = onPosterLongClick,
                 onContinueWatchingClick = onContinueWatchingClick,
                 onContinueWatchingLongPress = onContinueWatchingLongPress,
+                onFolderClick = onFolderClick,
                 onFirstCatalogRendered = onInitialHomeContentRendered,
             )
         }
@@ -1281,6 +1340,7 @@ private fun AppTabHost(
                 onAddonsClick = onAddonsSettingsClick,
                 onPluginsClick = onPluginsSettingsClick,
                 onAccountClick = onAccountSettingsClick,
+                onCollectionsClick = onCollectionsSettingsClick,
             )
         }
     }

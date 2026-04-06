@@ -2,6 +2,7 @@ package com.nuvio.app.features.settings
 
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CollectionsBookmark
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Hub
 import androidx.compose.material.icons.rounded.Tune
@@ -13,6 +14,7 @@ internal fun LazyListScope.contentDiscoveryContent(
     onPluginsClick: () -> Unit,
     onHomescreenClick: () -> Unit,
     onMetaScreenClick: () -> Unit,
+    onCollectionsClick: () -> Unit = {},
 ) {
     item {
         SettingsSection(
@@ -58,6 +60,13 @@ internal fun LazyListScope.contentDiscoveryContent(
                     icon = Icons.Rounded.Tune,
                     isTablet = isTablet,
                     onClick = onMetaScreenClick,
+                )
+                SettingsNavigationRow(
+                    title = "Collections",
+                    description = "Create custom catalog groupings with folders shown on Home.",
+                    icon = Icons.Rounded.CollectionsBookmark,
+                    isTablet = isTablet,
+                    onClick = onCollectionsClick,
                 )
             }
         }

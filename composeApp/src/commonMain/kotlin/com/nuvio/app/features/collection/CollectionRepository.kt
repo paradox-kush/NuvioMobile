@@ -1,0 +1,190 @@
+package com.nuvio.app.features.collection
+
+import co.touchlab.kermit.Logger
+import com.nuvio.app.features.addons.AddonRepository
+import com.nuvio.app.features.addons.ManagedAddon
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
+
+object CollectionRepository {
+    private val log = Logger.withTag("CollectionRepository")
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
+
+    private val _collections = MutableStateFlow<List<Collection>>(emptyList())
+    val collections: StateFlow<List<Collection>> = _collections.asStateFlow()
+
+    private var hasLoaded = false
+
+    fun initialize() {
+        if (hasLoaded) return
+        hasLoaded = true
+        val payload = CollectionStorage.loadPayload()
+        if (payload.isNullOrBlank()) return
+
+        runCatching {
+            _collections.value = json.decodeFromString<List<Collection>>(payload)
+        }.onFailure { e ->
+            log.e(e) { "Failed to load collections from storage" }
+        }
+    }
+
+    fun onProfileChanged() {
+        hasLoaded = false
+        _collections.value = emptyList()
+    }
+
+    fun clearLocalState() {
+        hasLoaded = false
+        _collections.value = emptyList()
+    }
+
+    fun getCollection(id: String): Collection? =
+        _collections.value.find { it.id == id }
+
+    fun addCollection(collection: Collection) {
+        ensureLoaded()
+        _collections.value = _collections.value + collection
+        persist()
+    }
+
+    fun updateCollection(collection: Collection) {
+        ensureLoaded()
+        _collections.value = _collections.value.map {
+            if (it.id == collection.id) collection else it
+        }
+        persist()
+    }
+
+    fun removeCollection(collectionId: String) {
+        ensureLoaded()
+        _collections.value = _collections.value.filter { it.id != collectionId }
+        persist()
+    }
+
+    fun setCollections(collections: List<Collection>) {
+        _collections.value = collections
+        persist()
+    }
+
+    fun moveUp(index: Int) {
+        ensureLoaded()
+        val list = _collections.value.toMutableList()
+        if (index <= 0 || index >= list.size) return
+        val item = list.removeAt(index)
+        list.add(index - 1, item)
+        _collections.value = list
+        persist()
+    }
+
+    fun moveDown(index: Int) {
+        ensureLoaded()
+        val list = _collections.value.toMutableList()
+        if (index < 0 || index >= list.size - 1) return
+        val item = list.removeAt(index)
+        list.add(index + 1, item)
+        _collections.value = list
+        persist()
+    }
+
+    fun exportToJson(): String {
+        ensureLoaded()
+        return json.encodeToString(_collections.value)
+    }
+
+    fun importFromJson(jsonString: String): Result<List<Collection>> {
+        return runCatching {
+            val imported = json.decodeFromString<List<Collection>>(jsonString)
+            _collections.value = imported
+            persist()
+            imported
+        }
+    }
+
+    fun validateJson(jsonString: String): ValidationResult {
+        if (jsonString.isBlank()) {
+            return ValidationResult(valid = false, error = "JSON is empty.")
+        }
+        return try {
+            val collections = json.decodeFromString<List<Collection>>(jsonString)
+            var totalFolders = 0
+            collections.forEachIndexed { ci, c ->
+                if (c.id.isBlank()) {
+                    return ValidationResult(valid = false, error = "Collection ${ci + 1} has blank id.")
+                }
+                if (c.title.isBlank()) {
+                    return ValidationResult(valid = false, error = "Collection '${c.id}' has blank title.")
+                }
+                c.folders.forEachIndexed { fi, f ->
+                    if (f.id.isBlank()) {
+                        return ValidationResult(valid = false, error = "Folder ${fi + 1} in '${c.title}' has blank id.")
+                    }
+                    if (f.title.isBlank()) {
+                        return ValidationResult(valid = false, error = "Folder '${f.id}' in '${c.title}' has blank title.")
+                    }
+                    f.catalogSources.forEachIndexed { si, s ->
+                        if (s.addonId.isBlank() || s.type.isBlank() || s.catalogId.isBlank()) {
+                            return ValidationResult(valid = false, error = "Source ${si + 1} in folder '${f.title}' has blank fields.")
+                        }
+                    }
+                    totalFolders++
+                }
+            }
+            ValidationResult(
+                valid = true,
+                collectionCount = collections.size,
+                folderCount = totalFolders,
+            )
+        } catch (e: Exception) {
+            ValidationResult(valid = false, error = "Invalid JSON: ${e.message}")
+        }
+    }
+
+    @OptIn(ExperimentalUuidApi::class)
+    fun generateId(): String = Uuid.random().toString()
+
+    fun getAvailableCatalogs(): List<AvailableCatalog> {
+        val addons = AddonRepository.uiState.value.addons
+        return addons.mapNotNull { addon ->
+            val manifest = addon.manifest ?: return@mapNotNull null
+            addon to manifest
+        }.flatMap { (addon, manifest) ->
+            manifest.catalogs
+                .filter { catalog -> catalog.extra.none { it.isRequired } }
+                .map { catalog ->
+                    AvailableCatalog(
+                        addonId = manifest.id,
+                        addonName = manifest.name,
+                        type = catalog.type,
+                        catalogId = catalog.id,
+                        catalogName = catalog.name,
+                    )
+                }
+        }
+    }
+
+    internal fun applyFromRemote(collections: List<Collection>) {
+        _collections.value = collections
+        persist()
+    }
+
+    private fun ensureLoaded() {
+        if (!hasLoaded) initialize()
+    }
+
+    private fun persist() {
+        runCatching {
+            CollectionStorage.savePayload(json.encodeToString(_collections.value))
+        }.onFailure { e ->
+            log.e(e) { "Failed to persist collections" }
+        }
+    }
+}

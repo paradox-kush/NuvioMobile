@@ -1,0 +1,374 @@
+package com.nuvio.app.features.collection
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.ui.NuvioPrimaryButton
+import com.nuvio.app.core.ui.NuvioScreen
+import com.nuvio.app.core.ui.NuvioScreenHeader
+import com.nuvio.app.core.ui.NuvioSectionLabel
+import com.nuvio.app.core.ui.NuvioStatusModal
+import com.nuvio.app.core.ui.NuvioSurfaceCard
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CollectionManagementScreen(
+    onBack: () -> Unit,
+    onNavigateToEditor: (String?) -> Unit,
+) {
+    val collections by CollectionRepository.collections.collectAsState()
+    val clipboardManager = LocalClipboardManager.current
+    var showImportDialog by remember { mutableStateOf(false) }
+    var importText by remember { mutableStateOf("") }
+    var importError by remember { mutableStateOf<String?>(null) }
+    var showDeleteConfirm by remember { mutableStateOf<String?>(null) }
+
+    NuvioScreen {
+        stickyHeader {
+            NuvioScreenHeader(
+                title = "Collections",
+                onBack = onBack,
+            ) {
+                IconButton(onClick = {
+                    val json = CollectionRepository.exportToJson()
+                    clipboardManager.setText(AnnotatedString(json))
+                }) {
+                    Icon(
+                        imageVector = Icons.Rounded.ContentCopy,
+                        contentDescription = "Copy JSON",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = { showImportDialog = true }) {
+                    Icon(
+                        imageVector = Icons.Rounded.ContentPaste,
+                        contentDescription = "Import",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        item {
+            NuvioSurfaceCard {
+                Text(
+                    text = "${collections.size} collection${if (collections.size != 1) "s" else ""}, " +
+                        "${collections.sumOf { it.folders.size }} folder${if (collections.sumOf { it.folders.size } != 1) "s" else ""}",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        item {
+            NuvioPrimaryButton(
+                text = "New Collection",
+                onClick = { onNavigateToEditor(null) },
+            )
+        }
+
+        if (collections.isNotEmpty()) {
+            item { NuvioSectionLabel(text = "YOUR COLLECTIONS") }
+        }
+
+        itemsIndexed(
+            items = collections,
+            key = { _, collection -> collection.id },
+        ) { index, collection ->
+            CollectionListItem(
+                collection = collection,
+                index = index,
+                totalCount = collections.size,
+                onEdit = { onNavigateToEditor(collection.id) },
+                onDelete = { showDeleteConfirm = collection.id },
+                onMoveUp = { CollectionRepository.moveUp(index) },
+                onMoveDown = { CollectionRepository.moveDown(index) },
+            )
+        }
+
+        if (collections.isEmpty()) {
+            item {
+                NuvioSurfaceCard(
+                    modifier = Modifier.padding(top = 24.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Folder,
+                        contentDescription = null,
+                        modifier = Modifier.size(40.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "No collections yet",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Create one to organize your catalogs.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+
+    if (showImportDialog) {
+        ImportDialog(
+            importText = importText,
+            importError = importError,
+            onTextChange = {
+                importText = it
+                importError = null
+            },
+            onConfirm = {
+                val result = CollectionRepository.validateJson(importText)
+                if (result.valid) {
+                    CollectionRepository.importFromJson(importText)
+                    showImportDialog = false
+                    importText = ""
+                    importError = null
+                } else {
+                    importError = result.error
+                }
+            },
+            onDismiss = {
+                showImportDialog = false
+                importText = ""
+                importError = null
+            },
+        )
+    }
+
+    val deleteId = showDeleteConfirm
+    val deleteCollection = deleteId?.let { id -> collections.find { it.id == id } }
+    NuvioStatusModal(
+        title = "Delete Collection",
+        message = "Delete \"${deleteCollection?.title ?: ""}\"? This cannot be undone.",
+        isVisible = deleteId != null,
+        confirmText = "Delete",
+        dismissText = "Cancel",
+        onConfirm = {
+            if (deleteId != null) {
+                CollectionRepository.removeCollection(deleteId)
+            }
+            showDeleteConfirm = null
+        },
+        onDismiss = { showDeleteConfirm = null },
+    )
+}
+
+@Composable
+private fun CollectionListItem(
+    collection: Collection,
+    index: Int,
+    totalCount: Int,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+) {
+    NuvioSurfaceCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = collection.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "${collection.folders.size} folder${if (collection.folders.size != 1) "s" else ""}" +
+                        if (collection.pinToTop) " · Pinned" else "",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            IconButton(
+                onClick = onMoveUp,
+                enabled = index > 0,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.ArrowUpward,
+                    contentDescription = "Move up",
+                    modifier = Modifier.size(20.dp).alpha(if (index > 0) 1f else 0.3f),
+                )
+            }
+            IconButton(
+                onClick = onMoveDown,
+                enabled = index < totalCount - 1,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.ArrowDownward,
+                    contentDescription = "Move down",
+                    modifier = Modifier.size(20.dp).alpha(if (index < totalCount - 1) 1f else 0.3f),
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(
+                onClick = onEdit,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Edit,
+                    contentDescription = "Edit",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Delete,
+                    contentDescription = "Delete",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ImportDialog(
+    importText: String,
+    importError: String?,
+    onTextChange: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.BasicAlertDialog(
+        onDismissRequest = onDismiss,
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(24.dp),
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    text = "Import Collections",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Paste your collections JSON below.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = importText,
+                    onValueChange = onTextChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp),
+                    placeholder = { Text("JSON", style = MaterialTheme.typography.bodyLarge) },
+                    isError = importError != null,
+                    supportingText = importError?.let {
+                        { Text(it, color = MaterialTheme.colorScheme.error) }
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { onConfirm() }),
+                    maxLines = 10,
+                    shape = RoundedCornerShape(14.dp),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.outline,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        cursorColor = MaterialTheme.colorScheme.primary,
+                    ),
+                )
+                Spacer(modifier = Modifier.height(18.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    androidx.compose.material3.Button(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                        ),
+                    ) {
+                        Text("Cancel")
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    androidx.compose.material3.Button(
+                        onClick = onConfirm,
+                        enabled = importText.isNotBlank(),
+                        shape = RoundedCornerShape(16.dp),
+                    ) {
+                        Text("Import")
+                    }
+                }
+            }
+        }
+    }
+}

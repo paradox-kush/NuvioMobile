@@ -131,10 +131,12 @@ object CatalogRepository {
                     } else {
                         mergeCatalogItems(_uiState.value.items, page.items)
                     }
+                    val supportsPagination = request.supportsPagination || page.rawItemCount >= CATALOG_PAGE_SIZE
+                    val loadedNewItems = reset || mergedItems.size > current.items.size
                     _uiState.value = CatalogUiState(
                         items = mergedItems,
                         isLoading = false,
-                        nextSkip = if (request.supportsPagination) page.nextSkip else null,
+                        nextSkip = if (supportsPagination && loadedNewItems) page.nextSkip else null,
                         errorMessage = null,
                     )
                 },
