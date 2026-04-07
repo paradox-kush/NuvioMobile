@@ -187,6 +187,10 @@ fun HomeScreen(
         HomeRepository.refresh(addonsUiState.addons)
     }
 
+    LaunchedEffect(collections) {
+        HomeCatalogSettingsRepository.syncCollections(collections)
+    }
+
     LaunchedEffect(completedSeriesCandidates, metaProviderKey) {
         if (completedSeriesCandidates.isEmpty()) {
             nextUpItemsBySeries = emptyMap()
@@ -368,48 +372,43 @@ fun HomeScreen(
                         )
                     }
                 }
-                // Pin-to-top collection rows
-                val pinnedCollections = collections.filter { it.pinToTop && it.folders.isNotEmpty() }
-                val unpinnedCollections = collections.filter { !it.pinToTop && it.folders.isNotEmpty() }
 
-                pinnedCollections.forEach { collection ->
-                    item(key = "collection_${collection.id}") {
-                        HomeCollectionRowSection(
-                            collection = collection,
-                            modifier = Modifier.padding(bottom = 12.dp),
-                            onFolderClick = onFolderClick,
-                        )
-                    }
-                }
+                val collectionsMap = collections.filter { it.folders.isNotEmpty() }
+                    .associateBy { "collection_${it.id}" }
+                val sectionsMap = homeUiState.sections.associateBy { it.key }
+                val orderedItems = homeSettingsUiState.items.filter { it.enabled }
 
-                items(
-                    count = homeUiState.sections.size,
-                    key = { index -> homeUiState.sections[index].key },
-                ) { index ->
-                    val section = homeUiState.sections[index]
-                    HomeCatalogRowSection(
-                        section = section,
-                        entries = section.items.take(HOME_CATALOG_PREVIEW_LIMIT),
-                        modifier = Modifier.padding(bottom = 12.dp),
-                        onViewAllClick = if (section.canOpenCatalog(HOME_CATALOG_PREVIEW_LIMIT)) {
-                            onCatalogClick?.let { { it(section) } }
-                        } else {
-                            null
-                        },
-                        watchedKeys = watchedUiState.watchedKeys,
-                        onPosterClick = onPosterClick,
-                        onPosterLongClick = onPosterLongClick,
-                    )
-                }
-
-                // Unpinned collection rows after catalog sections
-                unpinnedCollections.forEach { collection ->
-                    item(key = "collection_${collection.id}") {
-                        HomeCollectionRowSection(
-                            collection = collection,
-                            modifier = Modifier.padding(bottom = 12.dp),
-                            onFolderClick = onFolderClick,
-                        )
+                orderedItems.forEach { settingsItem ->
+                    if (settingsItem.isCollection) {
+                        val collection = collectionsMap[settingsItem.key]
+                        if (collection != null) {
+                            item(key = settingsItem.key) {
+                                HomeCollectionRowSection(
+                                    collection = collection,
+                                    modifier = Modifier.padding(bottom = 12.dp),
+                                    onFolderClick = onFolderClick,
+                                )
+                            }
+                        }
+                    } else {
+                        val section = sectionsMap[settingsItem.key]
+                        if (section != null && section.items.isNotEmpty()) {
+                            item(key = settingsItem.key) {
+                                HomeCatalogRowSection(
+                                    section = section,
+                                    entries = section.items.take(HOME_CATALOG_PREVIEW_LIMIT),
+                                    modifier = Modifier.padding(bottom = 12.dp),
+                                    onViewAllClick = if (section.canOpenCatalog(HOME_CATALOG_PREVIEW_LIMIT)) {
+                                        onCatalogClick?.let { { it(section) } }
+                                    } else {
+                                        null
+                                    },
+                                    watchedKeys = watchedUiState.watchedKeys,
+                                    onPosterClick = onPosterClick,
+                                    onPosterLongClick = onPosterLongClick,
+                                )
+                            }
+                        }
                     }
                 }
             }

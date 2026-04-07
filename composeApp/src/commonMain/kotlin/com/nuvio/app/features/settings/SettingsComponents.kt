@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -342,6 +343,7 @@ internal fun HomescreenCatalogRow(
     onTitleChange: (String) -> Unit,
     onEnabledChange: (Boolean) -> Unit,
     dragHandleScope: ReorderableCollectionItemScope,
+    onPinnedDragAttempt: () -> Unit = {},
 ) {
     val horizontalPadding = if (isTablet) 20.dp else 16.dp
     val verticalPadding = if (isTablet) 18.dp else 16.dp
@@ -375,15 +377,19 @@ internal fun HomescreenCatalogRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = item.addonName,
+                    text = if (item.isCollection) "Collection • ${item.addonName}" else item.addonName,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
                     text = buildString {
                         append(if (item.enabled) "Visible" else "Hidden")
-                        append(" • ")
-                        append(if (item.heroSourceEnabled) "Hero source" else "Not in hero")
+                        if (item.isCollection) {
+                            if (item.isPinnedToTop) append(" • Pinned to top")
+                        } else {
+                            append(" • ")
+                            append(if (item.heroSourceEnabled) "Hero source" else "Not in hero")
+                        }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -403,29 +409,41 @@ internal fun HomescreenCatalogRow(
                         uncheckedTrackColor = MaterialTheme.colorScheme.outlineVariant,
                     ),
                 )
-                IconButton(
-                    modifier = with(dragHandleScope) {
-                        Modifier.draggableHandle(
-                            onDragStarted = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                            },
-                            onDragStopped = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            },
+                if (item.isPinnedToTop) {
+                    IconButton(
+                        onClick = onPinnedDragAttempt,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Lock,
+                            contentDescription = "Pinned",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                         )
-                    },
-                    onClick = {},
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Menu,
-                        contentDescription = "Reorder",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    }
+                } else {
+                    IconButton(
+                        modifier = with(dragHandleScope) {
+                            Modifier.draggableHandle(
+                                onDragStarted = {
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                },
+                                onDragStopped = {
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                },
+                            )
+                        },
+                        onClick = {},
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Menu,
+                            contentDescription = "Reorder",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
 
-        AnimatedVisibility(visible = expanded) {
+        AnimatedVisibility(visible = expanded && !item.isCollection) {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {

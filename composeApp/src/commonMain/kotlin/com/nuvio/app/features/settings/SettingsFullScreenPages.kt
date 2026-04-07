@@ -14,6 +14,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.NuvioScreen
 import com.nuvio.app.core.ui.NuvioScreenHeader
 import com.nuvio.app.features.addons.AddonRepository
+import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
@@ -40,14 +41,20 @@ fun HomescreenSettingsScreen(
         }
     }
     val homescreenSettingsUiState by HomeCatalogSettingsRepository.uiState.collectAsStateWithLifecycle()
+    val collections by CollectionRepository.collections.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         AddonRepository.initialize()
+        CollectionRepository.initialize()
     }
 
     LaunchedEffect(homescreenCatalogRefreshKey) {
         if (homescreenCatalogRefreshKey.isEmpty()) return@LaunchedEffect
         HomeCatalogSettingsRepository.syncCatalogs(addonsUiState.addons)
+    }
+
+    LaunchedEffect(collections) {
+        HomeCatalogSettingsRepository.syncCollections(collections)
     }
 
     NuvioScreen(

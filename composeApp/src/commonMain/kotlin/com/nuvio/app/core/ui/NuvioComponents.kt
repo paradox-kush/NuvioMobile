@@ -1,8 +1,11 @@
 package com.nuvio.app.core.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,6 +45,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -426,6 +430,47 @@ fun NuvioStatusModal(
                         Text(confirmText)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun NuvioPinnedCollectionToast(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    message: String = "Remove pin to top from collection to move",
+) {
+    LaunchedEffect(visible) {
+        if (visible) {
+            kotlinx.coroutines.delay(2500L)
+            onDismiss()
+        }
+    }
+
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn() + slideInVertically { -it },
+        exit = fadeOut() + slideOutVertically { -it },
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.inverseSurface,
+                tonalElevation = 6.dp,
+                shadowElevation = 4.dp,
+            ) {
+                Text(
+                    text = message,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                )
             }
         }
     }

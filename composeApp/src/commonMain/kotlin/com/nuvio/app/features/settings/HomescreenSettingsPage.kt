@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioActionLabel
+import com.nuvio.app.core.ui.NuvioPinnedCollectionToast
 import com.nuvio.app.features.home.HomeCatalogSettingsItem
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
@@ -71,7 +72,8 @@ internal fun LazyListScope.homescreenSettingsContent(
         }
     }
     item {
-        if (heroEnabled && items.isNotEmpty()) {
+        val catalogOnlyItems = items.filter { !it.isCollection }
+        if (heroEnabled && catalogOnlyItems.isNotEmpty()) {
             var heroSourcesExpanded by remember { mutableStateOf(false) }
             SettingsSection(
                 title = "HERO SOURCES",
@@ -79,7 +81,7 @@ internal fun LazyListScope.homescreenSettingsContent(
             ) {
                 HeroSourcesDropdown(
                     isTablet = isTablet,
-                    items = items,
+                    items = catalogOnlyItems,
                     selectedHeroSourceCount = selectedHeroSourceCount,
                     expanded = heroSourcesExpanded,
                     onExpandedChange = { heroSourcesExpanded = it },
@@ -95,8 +97,15 @@ internal fun LazyListScope.homescreenSettingsContent(
                 message = "Install an addon with board-compatible catalogs to configure Homescreen rows.",
             )
         } else {
+            val catalogCount = items.count { !it.isCollection }
+            val collectionCount = items.count { it.isCollection }
+            val sectionTitle = when {
+                collectionCount > 0 && catalogCount > 0 -> "CATALOGS & COLLECTIONS"
+                collectionCount > 0 -> "COLLECTIONS"
+                else -> "CATALOGS"
+            }
             SettingsSection(
-                title = "CATALOGS",
+                title = sectionTitle,
                 isTablet = isTablet,
                 actions = {
                     NuvioActionLabel(
@@ -105,9 +114,21 @@ internal fun LazyListScope.homescreenSettingsContent(
                     )
                 },
             ) {
+                var showPinnedToast by remember { mutableStateOf(false) }
+                val hapticFeedback = LocalHapticFeedback.current
+
+                NuvioPinnedCollectionToast(
+                    visible = showPinnedToast,
+                    onDismiss = { showPinnedToast = false },
+                )
+
                 HomescreenCatalogList(
                     isTablet = isTablet,
                     items = items,
+                    onPinnedDragAttempt = {
+                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                        showPinnedToast = true
+                    },
                 )
             }
         }
@@ -219,6 +240,7 @@ private fun HomescreenSummaryCard(
 private fun HomescreenCatalogList(
     isTablet: Boolean,
     items: List<HomeCatalogSettingsItem>,
+    onPinnedDragAttempt: () -> Unit,
 ) {
     var expandedKey by remember { mutableStateOf<String?>(null) }
     val hapticFeedback = LocalHapticFeedback.current
@@ -226,6 +248,11 @@ private fun HomescreenCatalogList(
     val reorderableLazyListState = rememberReorderableLazyListState(
         lazyListState = lazyListState,
     ) { from, to ->
+        val fromItem = items.getOrNull(from.index)
+        val toItem = items.getOrNull(to.index)
+        if (fromItem?.isPinnedToTop == true || toItem?.isPinnedToTop == true) {
+            return@rememberReorderableLazyListState
+        }
         HomeCatalogSettingsRepository.moveByIndex(from.index, to.index)
         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
     }
@@ -238,7 +265,11 @@ private fun HomescreenCatalogList(
             state = lazyListState,
         ) {
             itemsIndexed(items, key = { _, item -> item.key }) { index, item ->
-                ReorderableItem(reorderableLazyListState, key = item.key) { isDragging ->
+                ReorderableItem(
+                    reorderableLazyListState,
+                    key = item.key,
+                    enabled = !item.isPinnedToTop,
+                ) { isDragging ->
                     val elevation by animateDpAsState(if (isDragging) 4.dp else 0.dp)
 
                     Surface(shadowElevation = elevation) {
@@ -256,6 +287,7 @@ private fun HomescreenCatalogList(
                                 onTitleChange = { HomeCatalogSettingsRepository.setCustomTitle(item.key, it) },
                                 onEnabledChange = { HomeCatalogSettingsRepository.setEnabled(item.key, it) },
                                 dragHandleScope = this@ReorderableItem,
+                                onPinnedDragAttempt = onPinnedDragAttempt,
                             )
                         }
                     }

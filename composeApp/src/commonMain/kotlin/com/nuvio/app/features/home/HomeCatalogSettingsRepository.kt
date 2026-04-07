@@ -1,6 +1,8 @@
 package com.nuvio.app.features.home
 
 import com.nuvio.app.features.addons.ManagedAddon
+import com.nuvio.app.features.collection.Collection
+import com.nuvio.app.features.collection.CollectionRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +19,9 @@ data class HomeCatalogSettingsItem(
     val enabled: Boolean = true,
     val heroSourceEnabled: Boolean = true,
     val order: Int = 0,
+    val isCollection: Boolean = false,
+    val collectionId: String? = null,
+    val isPinnedToTop: Boolean = false,
 ) {
     val displayTitle: String
         get() = customTitle.ifBlank { defaultTitle }
@@ -78,6 +83,7 @@ object HomeCatalogSettingsRepository {
 
     private var hasLoaded = false
     private var definitions: List<HomeCatalogDefinition> = emptyList()
+    private var collectionDefinitions: List<CollectionCatalogDefinition> = emptyList()
     private var preferences: MutableMap<String, StoredHomeCatalogPreference> = mutableMapOf()
     private var heroEnabled = true
 
@@ -86,12 +92,14 @@ object HomeCatalogSettingsRepository {
         preferences.clear()
         heroEnabled = true
         definitions = emptyList()
+        collectionDefinitions = emptyList()
         _uiState.value = HomeCatalogSettingsUiState()
     }
 
     fun clearLocalState() {
         hasLoaded = false
         definitions = emptyList()
+        collectionDefinitions = emptyList()
         preferences.clear()
         heroEnabled = true
         _uiState.value = HomeCatalogSettingsUiState()
@@ -100,10 +108,19 @@ object HomeCatalogSettingsRepository {
     fun syncCatalogs(addons: List<ManagedAddon>) {
         ensureLoaded()
         definitions = buildHomeCatalogDefinitions(addons)
-        if (definitions.isEmpty()) {
+        collectionDefinitions = buildCollectionDefinitions(CollectionRepository.collections.value)
+        if (definitions.isEmpty() && collectionDefinitions.isEmpty()) {
             publish()
             return
         }
+        normalizePreferences()
+        publish()
+        persist()
+    }
+
+    fun syncCollections(collections: List<Collection>) {
+        ensureLoaded()
+        collectionDefinitions = buildCollectionDefinitions(collections)
         normalizePreferences()
         publish()
         persist()
@@ -176,13 +193,11 @@ object HomeCatalogSettingsRepository {
 
     fun moveByIndex(fromIndex: Int, toIndex: Int) {
         ensureLoaded()
-        if (definitions.isEmpty()) return
-        val orderedKeys = definitions
-            .sortedBy { definition -> preferences[definition.key]?.order ?: Int.MAX_VALUE }
-            .map { it.key }
-            .toMutableList()
-        if (fromIndex !in orderedKeys.indices || toIndex !in orderedKeys.indices) return
+        val allKeys = allOrderedKeys()
+        if (allKeys.isEmpty()) return
+        if (fromIndex !in allKeys.indices || toIndex !in allKeys.indices) return
         if (fromIndex == toIndex) return
+        val orderedKeys = allKeys.toMutableList()
         orderedKeys.add(toIndex, orderedKeys.removeAt(fromIndex))
         orderedKeys.forEachIndexed { index, itemKey ->
             val current = preferences[itemKey] ?: return@forEachIndexed
@@ -219,14 +234,19 @@ object HomeCatalogSettingsRepository {
 
     private fun normalizePreferences() {
         val current = preferences
-        val orderedDefinitions = definitions.mapIndexed { defaultIndex, definition ->
+        data class UnifiedEntry(val key: String, val isCollection: Boolean)
+        val catalogEntries = definitions.map { UnifiedEntry(it.key, false) }
+        val collectionEntries = collectionDefinitions.map { UnifiedEntry(it.key, true) }
+        val allEntries = catalogEntries + collectionEntries
+
+        val orderedEntries = allEntries.mapIndexed { defaultIndex, entry ->
             Triple(
-                definition,
-                current[definition.key]?.order ?: defaultIndex,
+                entry,
+                current[entry.key]?.order ?: (definitions.size + defaultIndex),
                 defaultIndex,
             )
         }.sortedWith(
-            compareBy<Triple<HomeCatalogDefinition, Int, Int>>(
+            compareBy<Triple<UnifiedEntry, Int, Int>>(
                 { it.second },
                 { it.third },
             ),
@@ -234,15 +254,19 @@ object HomeCatalogSettingsRepository {
 
         val normalized = mutableMapOf<String, StoredHomeCatalogPreference>()
         var enabledHeroSourceCount = 0
-        orderedDefinitions.forEachIndexed { index, definition ->
-            val stored = current[definition.key]
-            val heroSourceEnabled = (stored?.heroSourceEnabled ?: true) &&
-                enabledHeroSourceCount < HERO_SOURCE_SELECTION_LIMIT
+        orderedEntries.forEachIndexed { index, entry ->
+            val stored = current[entry.key]
+            val heroSourceEnabled = if (entry.isCollection) {
+                false
+            } else {
+                (stored?.heroSourceEnabled ?: true) &&
+                    enabledHeroSourceCount < HERO_SOURCE_SELECTION_LIMIT
+            }
             if (heroSourceEnabled) {
                 enabledHeroSourceCount += 1
             }
-            normalized[definition.key] = StoredHomeCatalogPreference(
-                key = definition.key,
+            normalized[entry.key] = StoredHomeCatalogPreference(
+                key = entry.key,
                 customTitle = stored?.customTitle.orEmpty(),
                 enabled = stored?.enabled ?: true,
                 heroSourceEnabled = heroSourceEnabled,
@@ -253,8 +277,8 @@ object HomeCatalogSettingsRepository {
     }
 
     private fun publish() {
-        val items = definitions
-            .sortedBy { definition -> preferences[definition.key]?.order ?: Int.MAX_VALUE }
+        val collectionMap = collectionDefinitions.associateBy { it.key }
+        val catalogItems = definitions
             .map { definition ->
                 val preference = preferences[definition.key]
                 HomeCatalogSettingsItem(
@@ -267,6 +291,25 @@ object HomeCatalogSettingsRepository {
                     order = preference?.order ?: 0,
                 )
             }
+
+        val collectionItems = collectionDefinitions.map { colDef ->
+            val preference = preferences[colDef.key]
+            HomeCatalogSettingsItem(
+                key = colDef.key,
+                defaultTitle = colDef.title,
+                addonName = colDef.subtitle,
+                customTitle = preference?.customTitle.orEmpty(),
+                enabled = preference?.enabled ?: true,
+                heroSourceEnabled = false,
+                order = preference?.order ?: 0,
+                isCollection = true,
+                collectionId = colDef.collectionId,
+                isPinnedToTop = colDef.isPinnedToTop,
+            )
+        }
+
+        val items = (catalogItems + collectionItems)
+            .sortedBy { it.order }
 
         _uiState.value = HomeCatalogSettingsUiState(
             heroEnabled = heroEnabled,
@@ -307,12 +350,8 @@ object HomeCatalogSettingsRepository {
         direction: Int,
     ) {
         ensureLoaded()
-        if (definitions.isEmpty()) return
-
-        val orderedKeys = definitions
-            .sortedBy { definition -> preferences[definition.key]?.order ?: Int.MAX_VALUE }
-            .map { it.key }
-            .toMutableList()
+        val orderedKeys = allOrderedKeys().toMutableList()
+        if (orderedKeys.isEmpty()) return
 
         val currentIndex = orderedKeys.indexOf(key)
         if (currentIndex == -1) return
@@ -332,4 +371,30 @@ object HomeCatalogSettingsRepository {
         persist()
         HomeRepository.applyCurrentSettings()
     }
+
+    private fun allOrderedKeys(): List<String> {
+        val catalogKeys = definitions.map { it.key }
+        val collectionKeys = collectionDefinitions.map { it.key }
+        return (catalogKeys + collectionKeys)
+            .sortedBy { key -> preferences[key]?.order ?: Int.MAX_VALUE }
+    }
 }
+
+internal data class CollectionCatalogDefinition(
+    val key: String,
+    val collectionId: String,
+    val title: String,
+    val subtitle: String,
+    val isPinnedToTop: Boolean,
+)
+
+internal fun buildCollectionDefinitions(collections: List<Collection>): List<CollectionCatalogDefinition> =
+    collections.filter { it.folders.isNotEmpty() }.map { collection ->
+        CollectionCatalogDefinition(
+            key = "collection_${collection.id}",
+            collectionId = collection.id,
+            title = collection.title,
+            subtitle = "${collection.folders.size} folder${if (collection.folders.size != 1) "s" else ""}",
+            isPinnedToTop = collection.pinToTop,
+        )
+    }
