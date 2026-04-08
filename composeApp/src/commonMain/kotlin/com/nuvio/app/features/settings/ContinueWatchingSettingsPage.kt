@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -67,7 +68,7 @@ internal fun LazyListScope.continueWatchingSettingsContent(
             SettingsGroup(isTablet = isTablet) {
                 SettingsSwitchRow(
                     title = "Up Next from furthest episode",
-                    description = "When enabled, Up Next always continues from the furthest watched episode. When disabled, it follows from the most recently watched episode — useful if you rewatch earlier episodes.",
+                    description = "When enabled, Up Next always continues from the furthest watched episode. When disabled, it follows from the most recently watched episode. useful if you rewatch earlier episodes.",
                     checked = upNextFromFurthestEpisode,
                     isTablet = isTablet,
                     onCheckedChange = ContinueWatchingPreferencesRepository::setUpNextFromFurthestEpisode,
@@ -144,7 +145,9 @@ private fun ContinueWatchingStyleOption(
                 )
             }
             Box(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(148.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 ContinueWatchingStylePreview(

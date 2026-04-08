@@ -198,19 +198,67 @@ private fun WideCardPreview() {
 
 @Composable
 private fun PosterCardPreview() {
-    Box(
+    Column(
         modifier = Modifier
-            .width(44.dp)
-            .height(60.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)),
+            .width(60.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        NuvioProgressBar(
-            progress = 0.45f,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            height = 4.dp,
-            trackColor = MaterialTheme.colorScheme.surfaceTint.copy(alpha = 0.16f),
-        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(90.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 6.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+            ) {
+                NuvioProgressBar(
+                    progress = 0.45f,
+                    modifier = Modifier.width(40.dp),
+                    height = 4.dp,
+                    trackColor = MaterialTheme.colorScheme.surfaceTint.copy(alpha = 0.16f),
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.85f)
+                        .height(7.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.55f)
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .padding(start = 6.dp, top = 1.dp)
+                    .width(16.dp)
+                    .height(7.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f)),
+            )
+        }
     }
 }
 
@@ -239,8 +287,9 @@ private fun ContinueWatchingWideCard(
                 onLongClick = onLongClick,
             ),
     ) {
+        val artworkUrl = item.poster ?: item.background ?: item.imageUrl
         ArtworkPanel(
-            imageUrl = item.imageUrl,
+            imageUrl = artworkUrl,
             width = layout.widePosterStripWidth,
             modifier = Modifier.fillMaxHeight(),
         )
@@ -359,24 +408,13 @@ private fun ContinueWatchingPosterCard(
                     contentScale = ContentScale.Crop,
                 )
             }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(layout.posterCardHeight * 0.5f)
-                    .align(Alignment.BottomCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f)),
-                        ),
-                    ),
-            )
             if (item.seasonNumber != null && item.episodeNumber != null) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(8.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(Color.Black.copy(alpha = 0.7f))
+                        .background(Color.Black)
                         .padding(horizontal = 6.dp, vertical = 3.dp),
                 ) {
                     Text(
@@ -399,12 +437,21 @@ private fun ContinueWatchingPosterCard(
                 }
             }
             if (item.progressFraction > 0f) {
-                NuvioProgressBar(
-                    progress = item.progressFraction,
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                    height = 4.dp,
-                    trackColor = Color.White.copy(alpha = 0.3f),
-                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 10.dp, vertical = 10.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                ) {
+                    NuvioProgressBar(
+                        progress = item.progressFraction,
+                        modifier = Modifier.width(layout.posterCardWidth - 32.dp),
+                        height = layout.progressHeight,
+                        trackColor = MaterialTheme.colorScheme.surfaceTint.copy(alpha = 0.16f),
+                    )
+                }
             }
         }
 
@@ -415,18 +462,24 @@ private fun ContinueWatchingPosterCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.Top,
         ) {
-            Text(
-                text = item.title,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = layout.posterTitleSize,
-                    fontWeight = FontWeight.SemiBold,
-                    lineHeight = 18.sp,
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(layout.posterTitleBlockHeight),
+            ) {
+                Text(
+                    text = item.title,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = layout.posterTitleSize,
+                        fontWeight = FontWeight.SemiBold,
+                        lineHeight = 18.sp,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             if (item.progressFraction > 0f) {
                 Text(
                     text = "${(item.progressFraction * 100).roundToInt()}%",
@@ -506,6 +559,7 @@ internal data class ContinueWatchingLayout(
     val wideTitleSize: androidx.compose.ui.unit.TextUnit,
     val wideMetaSize: androidx.compose.ui.unit.TextUnit,
     val posterTitleSize: androidx.compose.ui.unit.TextUnit,
+    val posterTitleBlockHeight: Dp,
     val posterMetaSize: androidx.compose.ui.unit.TextUnit,
     val progressLabelSize: androidx.compose.ui.unit.TextUnit,
     val wideBadgeTextSize: androidx.compose.ui.unit.TextUnit,
@@ -527,6 +581,7 @@ internal fun rememberContinueWatchingLayout(maxWidthDp: Float): ContinueWatching
             wideTitleSize = 20.sp,
             wideMetaSize = 16.sp,
             posterTitleSize = 16.sp,
+            posterTitleBlockHeight = 40.dp,
             posterMetaSize = 14.sp,
             progressLabelSize = 14.sp,
             wideBadgeTextSize = 14.sp,
@@ -545,6 +600,7 @@ internal fun rememberContinueWatchingLayout(maxWidthDp: Float): ContinueWatching
             wideTitleSize = 18.sp,
             wideMetaSize = 15.sp,
             posterTitleSize = 15.sp,
+            posterTitleBlockHeight = 40.dp,
             posterMetaSize = 13.sp,
             progressLabelSize = 13.sp,
             wideBadgeTextSize = 13.sp,
@@ -563,6 +619,7 @@ internal fun rememberContinueWatchingLayout(maxWidthDp: Float): ContinueWatching
             wideTitleSize = 17.sp,
             wideMetaSize = 14.sp,
             posterTitleSize = 14.sp,
+            posterTitleBlockHeight = 38.dp,
             posterMetaSize = 12.sp,
             progressLabelSize = 12.sp,
             wideBadgeTextSize = 12.sp,
@@ -581,6 +638,7 @@ internal fun rememberContinueWatchingLayout(maxWidthDp: Float): ContinueWatching
             wideTitleSize = 16.sp,
             wideMetaSize = 13.sp,
             posterTitleSize = 14.sp,
+            posterTitleBlockHeight = 38.dp,
             posterMetaSize = 12.sp,
             progressLabelSize = 11.sp,
             wideBadgeTextSize = 12.sp,
