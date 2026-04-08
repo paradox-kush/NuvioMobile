@@ -3,6 +3,7 @@ package com.nuvio.app.features.home
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
+import com.nuvio.app.core.sync.MOBILE_SYNC_PLATFORM
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.features.profiles.ProfileRepository
 import io.github.jan.supabase.postgrest.postgrest
@@ -75,6 +76,7 @@ object HomeCatalogSettingsSyncService {
         runCatching {
             val params = buildJsonObject {
                 put("p_profile_id", profileId)
+                put("p_platform", MOBILE_SYNC_PLATFORM)
             }
             val result = SupabaseProvider.client.postgrest.rpc("sync_pull_home_catalog_settings", params)
             val blobs = result.decodeList<SupabaseHomeCatalogSettingsBlob>()
@@ -82,6 +84,10 @@ object HomeCatalogSettingsSyncService {
 
             if (blob == null) {
                 log.i { "pullFromServer — no remote home catalog settings found" }
+                val localPayload = HomeCatalogSettingsRepository.exportToSyncPayload()
+                if (localPayload.items.isNotEmpty()) {
+                    pushToRemote(profileId)
+                }
                 return
             }
 
@@ -96,6 +102,10 @@ object HomeCatalogSettingsSyncService {
 
             if (remotePayload.items.isEmpty()) {
                 log.i { "pullFromServer — remote has empty items, preserving local" }
+                val localPayload = HomeCatalogSettingsRepository.exportToSyncPayload()
+                if (localPayload.items.isNotEmpty()) {
+                    pushToRemote(profileId)
+                }
                 return
             }
 
@@ -121,13 +131,17 @@ object HomeCatalogSettingsSyncService {
     }
 
     private suspend fun pushToRemote() {
+        pushToRemote(ProfileRepository.activeProfileId)
+    }
+
+    private suspend fun pushToRemote(profileId: Int) {
         runCatching {
-            val profileId = ProfileRepository.activeProfileId
             val payload = HomeCatalogSettingsRepository.exportToSyncPayload()
             val jsonElement = json.encodeToJsonElement(SyncHomeCatalogPayload.serializer(), payload)
 
             val params = buildJsonObject {
                 put("p_profile_id", profileId)
+                put("p_platform", MOBILE_SYNC_PLATFORM)
                 put("p_settings_json", jsonElement)
             }
             SupabaseProvider.client.postgrest.rpc("sync_push_home_catalog_settings", params)

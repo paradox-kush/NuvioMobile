@@ -199,6 +199,27 @@ object MetaScreenSettingsRepository {
         _uiState.value = MetaScreenSettingsUiState()
     }
 
+    internal fun applyFromSync(
+        items: List<MetaScreenSectionItem>,
+        cinematicBackground: Boolean,
+        tabLayout: Boolean,
+    ) {
+        ensureLoaded()
+        this.cinematicBackground = cinematicBackground
+        this.tabLayout = tabLayout
+        preferences = items.associate { item ->
+            item.key to StoredMetaScreenSectionPreference(
+                key = item.key.name,
+                enabled = item.enabled,
+                order = item.order,
+                tabGroup = item.tabGroup,
+            )
+        }.toMutableMap()
+        normalizePreferences()
+        publish()
+        persist()
+    }
+
     fun setEnabled(key: MetaScreenSectionKey, enabled: Boolean) {
         updatePreference(key) { preference ->
             preference.copy(enabled = enabled)

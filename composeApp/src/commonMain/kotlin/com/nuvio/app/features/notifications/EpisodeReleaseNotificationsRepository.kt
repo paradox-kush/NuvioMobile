@@ -91,6 +91,24 @@ object EpisodeReleaseNotificationsRepository {
         }
     }
 
+    internal fun applyFromSyncEnabled(enabled: Boolean) {
+        ensureLoaded()
+        if (_uiState.value.isEnabled == enabled) return
+
+        _uiState.value = _uiState.value.copy(
+            isEnabled = enabled,
+            isLoading = false,
+            isSendingTest = false,
+            statusMessage = null,
+            errorMessage = null,
+        )
+        persist()
+
+        scope.launch {
+            refreshScheduledNotifications()
+        }
+    }
+
     fun setEnabled(enabled: Boolean) {
         ensureLoaded()
         scope.launch {

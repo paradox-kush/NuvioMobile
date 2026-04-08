@@ -70,6 +70,8 @@ import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.deeplink.AppDeepLink
 import com.nuvio.app.core.deeplink.AppDeepLinkRepository
+import com.nuvio.app.core.sync.AppForegroundMonitor
+import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.sync.SyncManager
 import com.nuvio.app.core.ui.NuvioNavigationBar
 import com.nuvio.app.core.ui.NuvioContinueWatchingActionSheet
@@ -398,6 +400,9 @@ private fun MainAppContent(
         remember {
             HomeCatalogSettingsSyncService.startObserving()
         }
+        remember {
+            ProfileSettingsSync.startObserving()
+        }
         val hapticFeedback = LocalHapticFeedback.current
         val coroutineScope = rememberCoroutineScope()
         var selectedTab by rememberSaveable { mutableStateOf(AppScreenTab.Home) }
@@ -418,6 +423,8 @@ private fun MainAppContent(
             TraktAuthRepository.ensureLoaded()
             TraktAuthRepository.uiState
         }.collectAsStateWithLifecycle()
+        val authState by AuthRepository.state.collectAsStateWithLifecycle()
+        val profileState by ProfileRepository.state.collectAsStateWithLifecycle()
     val playerSettingsUiState by remember {
         PlayerSettingsRepository.ensureLoaded()
         PlayerSettingsRepository.uiState
@@ -432,6 +439,15 @@ private fun MainAppContent(
         EpisodeReleaseNotificationsRepository.refreshAsync()
         kotlinx.coroutines.delay(5_000)
         initialHomeReady = true
+    }
+    LaunchedEffect(authState, profileState.activeProfile?.profileIndex) {
+        val authenticatedState = authState as? AuthState.Authenticated ?: return@LaunchedEffect
+        if (authenticatedState.isAnonymous) return@LaunchedEffect
+
+        val activeProfileId = profileState.activeProfile?.profileIndex ?: return@LaunchedEffect
+        AppForegroundMonitor.events().collect {
+            SyncManager.requestForegroundPull(activeProfileId)
+        }
     }
     var profileSwitchLoading by remember { mutableStateOf(false) }
 

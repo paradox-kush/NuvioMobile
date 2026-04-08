@@ -1,25 +1,33 @@
 package com.nuvio.app.core.sync
 
 import co.touchlab.kermit.Logger
-import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
+import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.collection.CollectionSyncService
 import com.nuvio.app.features.home.HomeCatalogSettingsSyncService
-import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.library.LibraryRepository
+import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.profiles.ProfileRepository
+import com.nuvio.app.features.trakt.TraktPlatformClock
 import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private const val FOREGROUND_PULL_DELAY_MS = 2500L
+private const val FOREGROUND_PULL_MIN_INTERVAL_MS = 60_000L
 
 object SyncManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val log = Logger.withTag("SyncManager")
+    private var foregroundPullJob: Job? = null
+    private var lastForegroundPullAtMs: Long = 0L
 
     fun pullAllForProfile(profileId: Int) {
         val authState = AuthRepository.state.value
@@ -68,6 +76,27 @@ object SyncManager {
             }
 
             log.i { "pullAllForProfile($profileId) — all pulls launched" }
+        }
+    }
+
+    fun requestForegroundPull(profileId: Int, force: Boolean = false) {
+        val authState = AuthRepository.state.value
+        if (authState !is AuthState.Authenticated || authState.isAnonymous) return
+
+        val now = TraktPlatformClock.nowEpochMs()
+        if (!force && foregroundPullJob?.isActive == true) return
+        if (!force && now - lastForegroundPullAtMs < FOREGROUND_PULL_MIN_INTERVAL_MS) return
+
+        foregroundPullJob = scope.launch {
+            if (!force) {
+                delay(FOREGROUND_PULL_DELAY_MS)
+            }
+
+            val currentAuthState = AuthRepository.state.value
+            if (currentAuthState !is AuthState.Authenticated || currentAuthState.isAnonymous) return@launch
+
+            lastForegroundPullAtMs = TraktPlatformClock.nowEpochMs()
+            pullAllForProfile(profileId)
         }
     }
 }

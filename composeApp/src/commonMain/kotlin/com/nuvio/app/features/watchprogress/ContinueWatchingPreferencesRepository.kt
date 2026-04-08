@@ -41,6 +41,25 @@ object ContinueWatchingPreferencesRepository {
         _uiState.value = ContinueWatchingPreferencesUiState()
     }
 
+    internal fun applyFromSync(
+        isVisible: Boolean,
+        style: ContinueWatchingSectionStyle,
+        upNextFromFurthestEpisode: Boolean,
+        dismissedNextUpKeys: Set<String>,
+    ) {
+        ensureLoaded()
+        _uiState.value = ContinueWatchingPreferencesUiState(
+            isVisible = isVisible,
+            style = style,
+            upNextFromFurthestEpisode = upNextFromFurthestEpisode,
+            dismissedNextUpKeys = dismissedNextUpKeys
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .toSet(),
+        )
+        persist()
+    }
+
     private fun loadFromDisk() {
         hasLoaded = true
 
