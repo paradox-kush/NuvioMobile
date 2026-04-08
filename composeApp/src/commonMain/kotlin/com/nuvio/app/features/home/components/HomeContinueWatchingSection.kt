@@ -408,25 +408,6 @@ private fun ContinueWatchingPosterCard(
                     contentScale = ContentScale.Crop,
                 )
             }
-            if (item.seasonNumber != null && item.episodeNumber != null) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(8.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color.Black)
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                ) {
-                    Text(
-                        text = "S${item.seasonNumber} E${item.episodeNumber}",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontSize = layout.posterMetaSize,
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                        color = Color.White,
-                    )
-                }
-            }
             if (item.progressFraction <= 0f && item.seasonNumber != null && item.episodeNumber != null) {
                 Box(
                     modifier = Modifier
@@ -480,13 +461,13 @@ private fun ContinueWatchingPosterCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (item.progressFraction > 0f) {
+            if (item.seasonNumber != null && item.episodeNumber != null) {
                 Text(
-                    text = "${(item.progressFraction * 100).roundToInt()}%",
+                    text = "S${item.seasonNumber} E${item.episodeNumber}",
                     modifier = Modifier.padding(start = 6.dp),
                     style = MaterialTheme.typography.labelSmall.copy(
-                        fontSize = layout.progressLabelSize,
-                        fontWeight = FontWeight.Medium,
+                        fontSize = layout.posterMetaSize,
+                        fontWeight = FontWeight.SemiBold,
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

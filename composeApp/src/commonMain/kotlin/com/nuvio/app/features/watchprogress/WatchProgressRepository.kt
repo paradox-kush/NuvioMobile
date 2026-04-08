@@ -12,6 +12,7 @@ import com.nuvio.app.features.watching.sync.ProgressSyncAdapter
 import com.nuvio.app.features.watching.sync.SupabaseProgressSyncAdapter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +31,7 @@ object WatchProgressRepository {
     private var hasLoaded = false
     private var currentProfileId: Int = 1
     private var entriesByVideoId: MutableMap<String, WatchProgressEntry> = mutableMapOf()
+    private var metadataResolutionJob: Job? = null
     internal var syncAdapter: ProgressSyncAdapter = SupabaseProgressSyncAdapter
 
     init {
@@ -72,6 +74,7 @@ object WatchProgressRepository {
     }
 
     fun clearLocalState() {
+        metadataResolutionJob?.cancel()
         hasLoaded = false
         currentProfileId = 1
         entriesByVideoId.clear()
@@ -91,6 +94,7 @@ object WatchProgressRepository {
                 .toMutableMap()
         }
         publish()
+        resolveRemoteMetadata()
     }
 
     suspend fun pullFromServer(profileId: Int) {
@@ -151,12 +155,13 @@ object WatchProgressRepository {
 
     private fun resolveRemoteMetadata() {
         val needsResolution = entriesByVideoId.values
-            .filter { it.poster == null && it.background == null }
+            .filter { it.poster.isNullOrBlank() || it.background.isNullOrBlank() }
             .groupBy { it.parentMetaId to it.contentType }
 
         if (needsResolution.isEmpty()) return
 
-        syncScope.launch {
+        metadataResolutionJob?.cancel()
+        metadataResolutionJob = syncScope.launch {
             withTimeoutOrNull(30_000L) {
                 AddonRepository.awaitManifestsLoaded()
             } ?: run {
@@ -355,6 +360,9 @@ object WatchProgressRepository {
         }
         publish()
         if (persist) persist()
+        if (entry.poster.isNullOrBlank() || entry.background.isNullOrBlank()) {
+            resolveRemoteMetadata()
+        }
         pushScrobbleToServer(entry)
         WatchingActions.onProgressEntryUpdated(entry)
     }

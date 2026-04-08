@@ -132,6 +132,11 @@ fun HomeScreen(
             cached.contentId to (cached.sortTimestamp to item)
         }.toMap()
     }
+    val cachedInProgressItems = remember(cachedSnapshots.second) {
+        cachedSnapshots.second.associate { cached ->
+            cached.videoId to cached.toContinueWatchingItem()
+        }
+    }
 
     val effectivNextUpItems = remember(
         nextUpItemsBySeries,
@@ -145,15 +150,24 @@ fun HomeScreen(
                 item.nextUpSeedEpisodeNumber,
             ) !in continueWatchingPreferences.dismissedNextUpKeys
         }
-        if (liveNextUpItems.isNotEmpty()) liveNextUpItems else cachedNextUpItems
+        if (liveNextUpItems.isNotEmpty()) {
+            liveNextUpItems.mapValues { (contentId, pair) ->
+                val cachedItem = cachedNextUpItems[contentId]?.second
+                pair.first to pair.second.withFallbackMetadata(cachedItem)
+            }
+        } else {
+            cachedNextUpItems
+        }
     }
 
     val continueWatchingItems = remember(
         visibleContinueWatchingEntries,
+        cachedInProgressItems,
         effectivNextUpItems,
     ) {
         buildHomeContinueWatchingItems(
             visibleEntries = visibleContinueWatchingEntries,
+            cachedInProgressByVideoId = cachedInProgressItems,
             nextUpItemsBySeries = effectivNextUpItems,
         )
     }
@@ -446,14 +460,16 @@ private const val TRAKT_CONTINUE_WATCHING_DAYS_CAP_DEFAULT = 60
 
 internal fun buildHomeContinueWatchingItems(
     visibleEntries: List<WatchProgressEntry>,
+    cachedInProgressByVideoId: Map<String, ContinueWatchingItem> = emptyMap(),
     nextUpItemsBySeries: Map<String, Pair<Long, ContinueWatchingItem>>,
 ): List<ContinueWatchingItem> {
     return buildList {
         addAll(
             visibleEntries.map { entry ->
+                val liveItem = entry.toContinueWatchingItem()
                 HomeContinueWatchingCandidate(
                     lastUpdatedEpochMs = entry.lastUpdatedEpochMs,
-                    item = entry.toContinueWatchingItem(),
+                    item = liveItem.withFallbackMetadata(cachedInProgressByVideoId[entry.videoId]),
                     isProgressEntry = true,
                 )
             },
@@ -577,5 +593,74 @@ private fun CachedNextUpItem.toContinueWatchingItem(): ContinueWatchingItem? {
         resumeProgressFraction = null,
         durationMs = 0L,
         progressFraction = 0f,
+    )
+}
+
+private fun CachedInProgressItem.toContinueWatchingItem(): ContinueWatchingItem {
+    val subtitle = if (season != null && episode != null) {
+        buildString {
+            append("S")
+            append(season)
+            append("E")
+            append(episode)
+            episodeTitle?.takeIf { it.isNotBlank() }?.let {
+                append(" • ")
+                append(it)
+            }
+        }
+    } else {
+        "Movie"
+    }
+    val explicitResumeProgressFraction = progressPercent
+        ?.takeIf { duration <= 0L && it > 0f }
+        ?.let { (it / 100f).coerceIn(0f, 1f) }
+    val normalizedProgressFraction = progressPercent
+        ?.let { (it / 100f).coerceIn(0f, 1f) }
+        ?: if (duration > 0L) {
+            (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+
+    return ContinueWatchingItem(
+        parentMetaId = contentId,
+        parentMetaType = contentType,
+        videoId = videoId,
+        title = name,
+        subtitle = subtitle,
+        imageUrl = episodeThumbnail ?: backdrop ?: poster,
+        logo = logo,
+        poster = poster,
+        background = backdrop,
+        seasonNumber = season,
+        episodeNumber = episode,
+        episodeTitle = episodeTitle,
+        episodeThumbnail = episodeThumbnail,
+        pauseDescription = pauseDescription,
+        isNextUp = false,
+        nextUpSeedSeasonNumber = null,
+        nextUpSeedEpisodeNumber = null,
+        resumePositionMs = if (explicitResumeProgressFraction != null) 0L else position,
+        resumeProgressFraction = explicitResumeProgressFraction,
+        durationMs = duration,
+        progressFraction = normalizedProgressFraction,
+    )
+}
+
+private fun ContinueWatchingItem.withFallbackMetadata(
+    fallback: ContinueWatchingItem?,
+): ContinueWatchingItem {
+    if (fallback == null) return this
+
+    return copy(
+        title = title.ifBlank { fallback.title },
+        subtitle = subtitle.ifBlank { fallback.subtitle },
+        imageUrl = imageUrl ?: fallback.imageUrl,
+        logo = logo ?: fallback.logo,
+        poster = poster ?: fallback.poster,
+        background = background ?: fallback.background,
+        episodeTitle = episodeTitle ?: fallback.episodeTitle,
+        episodeThumbnail = episodeThumbnail ?: fallback.episodeThumbnail,
+        pauseDescription = pauseDescription ?: fallback.pauseDescription,
     )
 }
