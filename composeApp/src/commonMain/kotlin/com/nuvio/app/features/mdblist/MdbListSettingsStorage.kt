@@ -1,5 +1,7 @@
 package com.nuvio.app.features.mdblist
 
+import kotlinx.serialization.json.JsonObject
+
 internal expect object MdbListSettingsStorage {
     fun loadEnabled(): Boolean?
     fun saveEnabled(enabled: Boolean)
@@ -19,4 +21,6 @@ internal expect object MdbListSettingsStorage {
     fun saveUseLetterboxd(enabled: Boolean)
     fun loadUseAudience(): Boolean?
     fun saveUseAudience(enabled: Boolean)
+    fun exportToSyncPayload(): JsonObject
+    fun replaceFromSyncPayload(payload: JsonObject)
 }

@@ -1,8 +1,12 @@
 package com.nuvio.app.features.settings
 
+import kotlinx.serialization.json.JsonObject
+
 internal expect object ThemeSettingsStorage {
     fun loadSelectedTheme(): String?
     fun saveSelectedTheme(themeName: String)
     fun loadAmoledEnabled(): Boolean?
     fun saveAmoledEnabled(enabled: Boolean)
+    fun exportToSyncPayload(): JsonObject
+    fun replaceFromSyncPayload(payload: JsonObject)
 }

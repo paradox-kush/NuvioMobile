@@ -1,5 +1,7 @@
 package com.nuvio.app.features.player
 
+import kotlinx.serialization.json.JsonObject
+
 internal expect object PlayerSettingsStorage {
     fun loadShowLoadingOverlay(): Boolean?
     fun saveShowLoadingOverlay(enabled: Boolean)
@@ -61,4 +63,6 @@ internal expect object PlayerSettingsStorage {
     fun saveUseLibass(enabled: Boolean)
     fun loadLibassRenderType(): String?
     fun saveLibassRenderType(renderType: String)
+    fun exportToSyncPayload(): JsonObject
+    fun replaceFromSyncPayload(payload: JsonObject)
 }

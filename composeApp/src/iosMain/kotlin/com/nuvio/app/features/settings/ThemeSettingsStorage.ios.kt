@@ -1,11 +1,19 @@
 package com.nuvio.app.features.settings
 
+import com.nuvio.app.core.sync.decodeSyncBoolean
+import com.nuvio.app.core.sync.decodeSyncString
+import com.nuvio.app.core.sync.encodeSyncBoolean
+import com.nuvio.app.core.sync.encodeSyncString
 import com.nuvio.app.core.storage.ProfileScopedKey
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import platform.Foundation.NSUserDefaults
 
 actual object ThemeSettingsStorage {
     private const val selectedThemeKey = "selected_theme"
     private const val amoledEnabledKey = "amoled_enabled"
+    private val syncKeys = listOf(selectedThemeKey, amoledEnabledKey)
 
     actual fun loadSelectedTheme(): String? =
         NSUserDefaults.standardUserDefaults.stringForKey(ProfileScopedKey.of(selectedThemeKey))
@@ -26,5 +34,19 @@ actual object ThemeSettingsStorage {
 
     actual fun saveAmoledEnabled(enabled: Boolean) {
         NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = ProfileScopedKey.of(amoledEnabledKey))
+    }
+
+    actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
+        loadSelectedTheme()?.let { put(selectedThemeKey, encodeSyncString(it)) }
+        loadAmoledEnabled()?.let { put(amoledEnabledKey, encodeSyncBoolean(it)) }
+    }
+
+    actual fun replaceFromSyncPayload(payload: JsonObject) {
+        syncKeys.forEach { key ->
+            NSUserDefaults.standardUserDefaults.removeObjectForKey(ProfileScopedKey.of(key))
+        }
+
+        payload.decodeSyncString(selectedThemeKey)?.let(::saveSelectedTheme)
+        payload.decodeSyncBoolean(amoledEnabledKey)?.let(::saveAmoledEnabled)
     }
 }

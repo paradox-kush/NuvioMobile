@@ -2,7 +2,14 @@ package com.nuvio.app.features.mdblist
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.nuvio.app.core.sync.decodeSyncBoolean
+import com.nuvio.app.core.sync.decodeSyncString
+import com.nuvio.app.core.sync.encodeSyncBoolean
+import com.nuvio.app.core.sync.encodeSyncString
 import com.nuvio.app.core.storage.ProfileScopedKey
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 actual object MdbListSettingsStorage {
     private const val preferencesName = "nuvio_mdblist_settings"
@@ -15,6 +22,17 @@ actual object MdbListSettingsStorage {
     private const val useTraktKey = "mdblist_use_trakt"
     private const val useLetterboxdKey = "mdblist_use_letterboxd"
     private const val useAudienceKey = "mdblist_use_audience"
+    private val syncKeys = listOf(
+        enabledKey,
+        apiKey,
+        useImdbKey,
+        useTmdbKey,
+        useTomatoesKey,
+        useMetacriticKey,
+        useTraktKey,
+        useLetterboxdKey,
+        useAudienceKey,
+    )
 
     private var preferences: SharedPreferences? = null
 
@@ -95,5 +113,33 @@ actual object MdbListSettingsStorage {
             ?.edit()
             ?.putBoolean(ProfileScopedKey.of(key), enabled)
             ?.apply()
+    }
+
+    actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
+        loadEnabled()?.let { put(enabledKey, encodeSyncBoolean(it)) }
+        loadApiKey()?.let { put(apiKey, encodeSyncString(it)) }
+        loadUseImdb()?.let { put(useImdbKey, encodeSyncBoolean(it)) }
+        loadUseTmdb()?.let { put(useTmdbKey, encodeSyncBoolean(it)) }
+        loadUseTomatoes()?.let { put(useTomatoesKey, encodeSyncBoolean(it)) }
+        loadUseMetacritic()?.let { put(useMetacriticKey, encodeSyncBoolean(it)) }
+        loadUseTrakt()?.let { put(useTraktKey, encodeSyncBoolean(it)) }
+        loadUseLetterboxd()?.let { put(useLetterboxdKey, encodeSyncBoolean(it)) }
+        loadUseAudience()?.let { put(useAudienceKey, encodeSyncBoolean(it)) }
+    }
+
+    actual fun replaceFromSyncPayload(payload: JsonObject) {
+        preferences?.edit()?.apply {
+            syncKeys.forEach { remove(ProfileScopedKey.of(it)) }
+        }?.apply()
+
+        payload.decodeSyncBoolean(enabledKey)?.let(::saveEnabled)
+        payload.decodeSyncString(apiKey)?.let(::saveApiKey)
+        payload.decodeSyncBoolean(useImdbKey)?.let(::saveUseImdb)
+        payload.decodeSyncBoolean(useTmdbKey)?.let(::saveUseTmdb)
+        payload.decodeSyncBoolean(useTomatoesKey)?.let(::saveUseTomatoes)
+        payload.decodeSyncBoolean(useMetacriticKey)?.let(::saveUseMetacritic)
+        payload.decodeSyncBoolean(useTraktKey)?.let(::saveUseTrakt)
+        payload.decodeSyncBoolean(useLetterboxdKey)?.let(::saveUseLetterboxd)
+        payload.decodeSyncBoolean(useAudienceKey)?.let(::saveUseAudience)
     }
 }

@@ -1,6 +1,13 @@
 package com.nuvio.app.features.tmdb
 
+import com.nuvio.app.core.sync.decodeSyncBoolean
+import com.nuvio.app.core.sync.decodeSyncString
+import com.nuvio.app.core.sync.encodeSyncBoolean
+import com.nuvio.app.core.sync.encodeSyncString
 import com.nuvio.app.core.storage.ProfileScopedKey
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import platform.Foundation.NSUserDefaults
 
 actual object TmdbSettingsStorage {
@@ -18,6 +25,22 @@ actual object TmdbSettingsStorage {
     private const val useSeasonPostersKey = "tmdb_use_season_posters"
     private const val useMoreLikeThisKey = "tmdb_use_more_like_this"
     private const val useCollectionsKey = "tmdb_use_collections"
+    private val syncKeys = listOf(
+        enabledKey,
+        apiKeyKey,
+        languageKey,
+        useTrailersKey,
+        useArtworkKey,
+        useBasicInfoKey,
+        useDetailsKey,
+        useCreditsKey,
+        useProductionsKey,
+        useNetworksKey,
+        useEpisodesKey,
+        useSeasonPostersKey,
+        useMoreLikeThisKey,
+        useCollectionsKey,
+    )
 
     actual fun loadEnabled(): Boolean? = loadBoolean(enabledKey)
 
@@ -117,5 +140,43 @@ actual object TmdbSettingsStorage {
 
     private fun saveBoolean(key: String, enabled: Boolean) {
         NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = ProfileScopedKey.of(key))
+    }
+
+    actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
+        loadEnabled()?.let { put(enabledKey, encodeSyncBoolean(it)) }
+        loadApiKey()?.let { put(apiKeyKey, encodeSyncString(it)) }
+        loadLanguage()?.let { put(languageKey, encodeSyncString(it)) }
+        loadUseTrailers()?.let { put(useTrailersKey, encodeSyncBoolean(it)) }
+        loadUseArtwork()?.let { put(useArtworkKey, encodeSyncBoolean(it)) }
+        loadUseBasicInfo()?.let { put(useBasicInfoKey, encodeSyncBoolean(it)) }
+        loadUseDetails()?.let { put(useDetailsKey, encodeSyncBoolean(it)) }
+        loadUseCredits()?.let { put(useCreditsKey, encodeSyncBoolean(it)) }
+        loadUseProductions()?.let { put(useProductionsKey, encodeSyncBoolean(it)) }
+        loadUseNetworks()?.let { put(useNetworksKey, encodeSyncBoolean(it)) }
+        loadUseEpisodes()?.let { put(useEpisodesKey, encodeSyncBoolean(it)) }
+        loadUseSeasonPosters()?.let { put(useSeasonPostersKey, encodeSyncBoolean(it)) }
+        loadUseMoreLikeThis()?.let { put(useMoreLikeThisKey, encodeSyncBoolean(it)) }
+        loadUseCollections()?.let { put(useCollectionsKey, encodeSyncBoolean(it)) }
+    }
+
+    actual fun replaceFromSyncPayload(payload: JsonObject) {
+        syncKeys.forEach { key ->
+            NSUserDefaults.standardUserDefaults.removeObjectForKey(ProfileScopedKey.of(key))
+        }
+
+        payload.decodeSyncBoolean(enabledKey)?.let(::saveEnabled)
+        payload.decodeSyncString(apiKeyKey)?.let(::saveApiKey)
+        payload.decodeSyncString(languageKey)?.let(::saveLanguage)
+        payload.decodeSyncBoolean(useTrailersKey)?.let(::saveUseTrailers)
+        payload.decodeSyncBoolean(useArtworkKey)?.let(::saveUseArtwork)
+        payload.decodeSyncBoolean(useBasicInfoKey)?.let(::saveUseBasicInfo)
+        payload.decodeSyncBoolean(useDetailsKey)?.let(::saveUseDetails)
+        payload.decodeSyncBoolean(useCreditsKey)?.let(::saveUseCredits)
+        payload.decodeSyncBoolean(useProductionsKey)?.let(::saveUseProductions)
+        payload.decodeSyncBoolean(useNetworksKey)?.let(::saveUseNetworks)
+        payload.decodeSyncBoolean(useEpisodesKey)?.let(::saveUseEpisodes)
+        payload.decodeSyncBoolean(useSeasonPostersKey)?.let(::saveUseSeasonPosters)
+        payload.decodeSyncBoolean(useMoreLikeThisKey)?.let(::saveUseMoreLikeThis)
+        payload.decodeSyncBoolean(useCollectionsKey)?.let(::saveUseCollections)
     }
 }

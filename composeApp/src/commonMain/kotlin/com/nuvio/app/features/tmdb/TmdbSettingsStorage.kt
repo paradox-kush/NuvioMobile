@@ -1,5 +1,7 @@
 package com.nuvio.app.features.tmdb
 
+import kotlinx.serialization.json.JsonObject
+
 internal expect object TmdbSettingsStorage {
     fun loadEnabled(): Boolean?
     fun saveEnabled(enabled: Boolean)
@@ -29,4 +31,6 @@ internal expect object TmdbSettingsStorage {
     fun saveUseMoreLikeThis(enabled: Boolean)
     fun loadUseCollections(): Boolean?
     fun saveUseCollections(enabled: Boolean)
+    fun exportToSyncPayload(): JsonObject
+    fun replaceFromSyncPayload(payload: JsonObject)
 }
