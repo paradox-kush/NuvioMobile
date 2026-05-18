@@ -1,6 +1,7 @@
 package com.nuvio.app.features.plugins.runtime
 
 import com.nuvio.app.features.plugins.PluginRuntimeResult
+import com.nuvio.app.features.plugins.PluginStorage
 import com.nuvio.app.features.plugins.runtime.crypto.CryptoBridge
 import com.nuvio.app.features.plugins.runtime.dom.DomBridge
 import com.nuvio.app.features.plugins.runtime.host.HostApiRegistry
