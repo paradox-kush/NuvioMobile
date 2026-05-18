@@ -12,6 +12,7 @@ import com.dokar.quickjs.binding.function
 import com.nuvio.app.features.plugins.runtime.network.FetchBridge
 import com.nuvio.app.features.plugins.runtime.network.UrlBridge
 import com.nuvio.app.features.plugins.runtime.wasm.WasmBridge
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -62,7 +63,7 @@ internal object PluginRuntime {
     ): String? = withContext(Dispatchers.Default) {
         withTimeout(PLUGIN_TIMEOUT_MS) {
             val jsRuntime = JsRuntime()
-            var resultJson: String? = null
+            val deferred = CompletableDeferred<String?>()
 
             try {
                 jsRuntime.use {
@@ -98,16 +99,14 @@ internal object PluginRuntime {
                         })();
                     """.trimIndent()
                     
-                    var captureResult: String? = null
                     function("__capture_settings_result") { args: Array<Any?> ->
-                        captureResult = args.getOrNull(0)?.toString()
+                        deferred.complete(args.getOrNull(0)?.toString())
                         null
                     }
                     
                     evaluate<Any?>(callCode)
-                    resultJson = captureResult
+                    deferred.await()
                 }
-                resultJson
             } catch (e: Exception) {
                 null
             }
@@ -124,11 +123,11 @@ internal object PluginRuntime {
         scraperSettings: Map<String, JsonElement>,
     ): List<PluginRuntimeResult> {
         val jsRuntime = JsRuntime()
-        var resultJson = "[]"
+        val deferred = CompletableDeferred<String>()
 
         val domBridge = DomBridge()
         val hostRegistry = HostApiRegistry().apply {
-            addModule(HostFunctions(scraperId) { resultJson = it })
+            addModule(HostFunctions(scraperId) { deferred.complete(it) })
             addModule(FetchBridge())
             addModule(UrlBridge())
             addModule(CryptoBridge())
@@ -178,9 +177,10 @@ internal object PluginRuntime {
                     })();
                 """.trimIndent()
                 evaluate<Any?>(callCode)
+                
+                val resultJson = deferred.await()
+                return parseJsonResults(resultJson)
             }
-
-            return parseJsonResults(resultJson)
         } finally {
             domBridge.clear()
         }
