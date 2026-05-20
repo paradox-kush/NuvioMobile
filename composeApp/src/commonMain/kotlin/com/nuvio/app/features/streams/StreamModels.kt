@@ -1,6 +1,7 @@
 package com.nuvio.app.features.streams
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.Serializable
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 

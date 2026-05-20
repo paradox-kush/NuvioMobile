@@ -1586,7 +1586,8 @@ private fun MainAppContent(
                                 parentMetaType = launch.parentMetaType ?: launch.type,
                                 initialPositionMs = launch.resumePositionMs ?: 0L,
                                 initialProgressFraction = launch.resumeProgressFraction,
-                            )                        StreamsRepository.consumeAutoPlay()
+                            )
+                        StreamsRepository.consumeAutoPlay()
                         StreamsRepository.cancelLoading()
                         if (playerSettings.externalPlayerEnabled) {
                             openExternalPlayback(playerLaunch)
