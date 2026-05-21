@@ -218,121 +218,81 @@ internal object JsBindings {
     """.trimIndent()
 
     private fun cryptoPolyfill() = """
-        function __hexToWords(hex) {
-            var words = [];
-            for (var i = 0; i < hex.length; i += 8) {
-                var chunk = hex.substring(i, i + 8);
-                while (chunk.length < 8) chunk += '0';
-                words.push(parseInt(chunk, 16) | 0);
-            }
-            return words;
-        }
-
-        function __wordsToHex(words, sigBytes) {
-            var hex = '';
-            for (var i = 0; i < sigBytes; i++) {
-                var word = words[i >>> 2] || 0;
-                var byte = (word >>> (24 - (i % 4) * 8)) & 0xff;
-                var part = byte.toString(16);
-                if (part.length < 2) part = '0' + part;
-                hex += part;
-            }
-            return hex;
-        }
-
-        function __bytesToHex(bytes) {
-            bytes = __toUint8Array(bytes);
-            var hex = '';
-            for (var i = 0; i < bytes.length; i++) {
-                var part = bytes[i].toString(16);
-                if (part.length < 2) part = '0' + part;
-                hex += part;
-            }
-            return hex;
-        }
-
-        function __hexToBytes(hex) {
-            var normalizedHex = (hex || '').toLowerCase();
-            if (normalizedHex.length % 2 !== 0) normalizedHex = '0' + normalizedHex;
-            var bytes = new Uint8Array(normalizedHex.length / 2);
-            for (var i = 0; i < normalizedHex.length; i += 2) {
-                bytes[i / 2] = parseInt(normalizedHex.substring(i, i + 2), 16) || 0;
-            }
-            return bytes;
-        }
-
-        function __binaryStringToBytes(value) {
-            var text = value == null ? '' : String(value);
-            var bytes = new Uint8Array(text.length);
-            for (var i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xff;
-            return bytes;
-        }
-
-        function __bytesToBinaryString(bytes) {
-            bytes = __toUint8Array(bytes);
-            var out = '';
-            for (var i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]);
-            return out;
-        }
-
-        function __wordArrayToHex(value) {
-            if (!value) return '';
-            if (typeof value.__hex === 'string') return value.__hex.toLowerCase();
-            if (Array.isArray(value.words) && typeof value.sigBytes === 'number') {
-                return __wordsToHex(value.words, value.sigBytes);
-            }
-            return typeof __crypto_utf8_to_hex !== 'undefined' ? __crypto_utf8_to_hex(String(value)) : '';
-        }
-
-        function __buildWordArray(hex, utf8Override) {
-            var normalizedHex = (hex || '').toLowerCase();
-            if (normalizedHex.length % 2 !== 0) normalizedHex = '0' + normalizedHex;
-            var wordArray = {
-                __hex: normalizedHex,
-                __utf8: utf8Override !== undefined ? utf8Override : (typeof __crypto_hex_to_utf8 !== 'undefined' ? __crypto_hex_to_utf8(normalizedHex) : ''),
-                sigBytes: normalizedHex.length / 2,
-                words: __hexToWords(normalizedHex),
-                toString: function(encoder) {
-                    if (!encoder || encoder === CryptoJS.enc.Hex) return this.__hex;
-                    if (encoder === CryptoJS.enc.Utf8) return this.__utf8;
-                    if (encoder === CryptoJS.enc.Base64) return btoa(__bytesToBinaryString(__hexToBytes(this.__hex)));
-                    return this.__hex;
-                },
-                clamp: function() { return this; },
-                concat: function(other) {
-                    var otherHex = __wordArrayToHex(other);
-                    this.__hex += otherHex;
-                    this.__utf8 = typeof __crypto_hex_to_utf8 !== 'undefined' ? __crypto_hex_to_utf8(this.__hex) : '';
-                    this.sigBytes = this.__hex.length / 2;
-                    this.words = __hexToWords(this.__hex);
-                    return this;
+        var WordArray = {
+            init: function(words, sigBytes) {
+                words = this.words = words || [];
+                if (sigBytes != undefined) {
+                    this.sigBytes = sigBytes;
+                } else {
+                    this.sigBytes = words.length * 4;
                 }
-            };
-            return wordArray;
+            },
+            toString: function(encoder) {
+                return (encoder || CryptoJS.enc.Hex).stringify(this);
+            },
+            concat: function(wordArray) {
+                var thisWords = this.words;
+                var thatWords = wordArray.words;
+                var thisSigBytes = this.sigBytes;
+                var thatSigBytes = wordArray.sigBytes;
+
+                this.clamp();
+
+                if (thisSigBytes % 4) {
+                    for (var i = 0; i < thatSigBytes; i++) {
+                        var thatByte = (thatWords[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+                        thisWords[(thisSigBytes + i) >>> 2] |= thatByte << (24 - ((thisSigBytes + i) % 4) * 8);
+                    }
+                } else {
+                    for (var j = 0; j < thatSigBytes; j += 4) {
+                        thisWords[(thisSigBytes + j) >>> 2] = thatWords[j >>> 2];
+                    }
+                }
+                this.sigBytes += thatSigBytes;
+                return this;
+            },
+            clamp: function() {
+                var words = this.words;
+                var sigBytes = this.sigBytes;
+                words[sigBytes >>> 2] &= 0xffffffff << (32 - (sigBytes % 4) * 8);
+                words.length = Math.ceil(sigBytes / 4);
+                return this;
+            },
+            clone: function() {
+                var clone = Object.create(WordArray);
+                clone.init(this.words.slice(0), this.sigBytes);
+                return clone;
+            }
+        };
+        
+        function __wordArrayCreate(words, sigBytes) {
+            var wa = Object.create(WordArray);
+            wa.init(words, sigBytes);
+            return wa;
         }
 
-        function __wordArrayFromHex(hex) { return __buildWordArray(hex, undefined); }
-        function __wordArrayFromUtf8(text) {
-            var utf8 = text == null ? '' : String(text);
-            var hex = typeof __crypto_utf8_to_hex !== 'undefined' ? __crypto_utf8_to_hex(utf8) : '';
-            return __buildWordArray(hex, utf8);
-        }
-        function __wordArrayFromBase64(base64) {
-            return __buildWordArray(__bytesToHex(__binaryStringToBytes(atob(base64 || ''))), undefined);
+        function __wordArrayToBytes(wordArray) {
+            var bytes = new Uint8Array(wordArray.sigBytes);
+            for (var i = 0; i < wordArray.sigBytes; i++) {
+                bytes[i] = (wordArray.words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+            }
+            return bytes;
         }
 
-        function __wordArrayToBytes(value) {
-            return __hexToBytes(__wordArrayToHex(value));
+        function __bytesToWordArray(bytes) {
+            var words = [];
+            for (var i = 0; i < bytes.length; i++) {
+                words[i >>> 2] |= (bytes[i] & 0xff) << (24 - (i % 4) * 8);
+            }
+            return __wordArrayCreate(words, bytes.length);
         }
 
         function __normalizeWordArrayInput(value) {
-            if (value && typeof value === 'object' && typeof value.__utf8 === 'string') return value.__utf8;
-            if (value && typeof value === 'object' && typeof value.__hex === 'string') return typeof __crypto_hex_to_utf8 !== 'undefined' ? __crypto_hex_to_utf8(value.__hex) : '';
             if (value && typeof value === 'object' && Array.isArray(value.words) && typeof value.sigBytes === 'number') {
-                return typeof __crypto_hex_to_utf8 !== 'undefined' ? __crypto_hex_to_utf8(__wordsToHex(value.words, value.sigBytes)) : '';
+                return __wordArrayToBytes(value);
             }
-            if (value == null) return '';
-            return String(value);
+            if (typeof value === 'string') return new TextEncoder().encode(value);
+            return __toUint8Array(value);
         }
 
         function __toUint8Array(data) {
@@ -342,46 +302,106 @@ internal object JsBindings {
             return new Uint8Array(0);
         }
 
-        function __bufferToUint8(data) {
-            if (data instanceof Uint8Array) return data;
-            if (data instanceof ArrayBuffer) return new Uint8Array(data);
-            if (typeof data === 'string') return new TextEncoder().encode(data);
-            return new Uint8Array(0);
-        }
-
         var CryptoJS = {
             enc: {
-                Hex: { stringify: function(wa) { return __wordArrayToHex(wa); }, parse: function(s) { return __wordArrayFromHex(s); } },
-                Utf8: { stringify: function(wa) { return wa.toString(CryptoJS.enc.Utf8); }, parse: function(s) { return __wordArrayFromUtf8(s); } },
-                Base64: { stringify: function(wa) { return wa.toString(CryptoJS.enc.Base64); }, parse: function(s) { return __wordArrayFromBase64(s); } }
+                Hex: {
+                    stringify: function(wordArray) {
+                        var words = wordArray.words;
+                        var sigBytes = wordArray.sigBytes;
+                        var hexChars = [];
+                        for (var i = 0; i < sigBytes; i++) {
+                            var bite = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+                            var hexStr = bite.toString(16);
+                            if (hexStr.length < 2) hexStr = '0' + hexStr;
+                            hexChars.push(hexStr);
+                        }
+                        return hexChars.join('');
+                    },
+                    parse: function(hexStr) {
+                        var hexStrLength = hexStr.length;
+                        var words = [];
+                        for (var i = 0; i < hexStrLength; i += 2) {
+                            words[i >>> 3] |= parseInt(hexStr.substr(i, 2), 16) << (24 - (i % 8) * 4);
+                        }
+                        return __wordArrayCreate(words, hexStrLength / 2);
+                    }
+                },
+                Utf8: {
+                    stringify: function(wordArray) {
+                        return new TextDecoder('utf-8').decode(__wordArrayToBytes(wordArray));
+                    },
+                    parse: function(utf8Str) {
+                        return __bytesToWordArray(new TextEncoder().encode(String(utf8Str)));
+                    }
+                },
+                Base64: {
+                    stringify: function(wordArray) {
+                        var bytes = __wordArrayToBytes(wordArray);
+                        var binaryStr = '';
+                        for (var j = 0; j < bytes.length; j++) {
+                            binaryStr += String.fromCharCode(bytes[j]);
+                        }
+                        return btoa(binaryStr);
+                    },
+                    parse: function(base64Str) {
+                        var binaryStr = atob(String(base64Str || ''));
+                        var bytes = new Uint8Array(binaryStr.length);
+                        for (var i = 0; i < binaryStr.length; i++) {
+                            bytes[i] = binaryStr.charCodeAt(i) & 0xff;
+                        }
+                        return __bytesToWordArray(bytes);
+                    }
+                }
             },
-            lib: { WordArray: { create: function(words, sigBytes) { return __buildWordArray(__wordsToHex(words, sigBytes), undefined); } } },
+            lib: {
+                WordArray: {
+                    create: function(words, sigBytes) {
+                        return __wordArrayCreate(words, sigBytes);
+                    }
+                }
+            },
             mode: { CBC: 'AES-CBC', GCM: 'AES-GCM', ECB: 'AES-ECB' },
             pad: { Pkcs7: 'Pkcs7', NoPadding: 'NoPadding' },
             algo: { SHA256: 'SHA256' },
-            MD5: function(m) { return __wordArrayFromHex(__crypto_digest_hex('MD5', __normalizeWordArrayInput(m))); },
-            SHA1: function(m) { return __wordArrayFromHex(__crypto_digest_hex('SHA1', __normalizeWordArrayInput(m))); },
-            SHA256: function(m) { return __wordArrayFromHex(__crypto_digest_hex('SHA256', __normalizeWordArrayInput(m))); },
-            SHA512: function(m) { return __wordArrayFromHex(__crypto_digest_hex('SHA512', __normalizeWordArrayInput(m))); },
+            MD5: function(m) { 
+                var bytes = __normalizeWordArrayInput(m);
+                var res = typeof __crypto_digest_raw !== 'undefined' ? __crypto_digest_raw('MD5', bytes) : new Uint8Array(0);
+                return __bytesToWordArray(res);
+            },
+            SHA1: function(m) { 
+                var bytes = __normalizeWordArrayInput(m);
+                var res = typeof __crypto_digest_raw !== 'undefined' ? __crypto_digest_raw('SHA1', bytes) : new Uint8Array(0);
+                return __bytesToWordArray(res);
+            },
+            SHA256: function(m) { 
+                var bytes = __normalizeWordArrayInput(m);
+                var res = typeof __crypto_digest_raw !== 'undefined' ? __crypto_digest_raw('SHA256', bytes) : new Uint8Array(0);
+                return __bytesToWordArray(res);
+            },
+            SHA512: function(m) { 
+                var bytes = __normalizeWordArrayInput(m);
+                var res = typeof __crypto_digest_raw !== 'undefined' ? __crypto_digest_raw('SHA512', bytes) : new Uint8Array(0);
+                return __bytesToWordArray(res);
+            },
             PBKDF2: function(pass, salt, options) {
                 options = options || {};
-                var pBytes = __bufferToUint8(__normalizeWordArrayInput(pass));
-                var sBytes = __bufferToUint8(__normalizeWordArrayInput(salt));
+                var pBytes = __normalizeWordArrayInput(pass);
+                var sBytes = __normalizeWordArrayInput(salt);
                 var iter = options.iterations || 1000;
                 var kSize = options.keySize || (256/32);
                 var algo = options.hasher === CryptoJS.algo.SHA256 ? 'SHA256' : 'SHA1';
                 var resBytes = typeof __crypto_pbkdf2_raw !== 'undefined' ? __crypto_pbkdf2_raw(pBytes, sBytes, iter, kSize * 32, algo) : new Uint8Array(0);
-                return __wordArrayFromHex(__bytesToHex(resBytes));
+                return __bytesToWordArray(resBytes);
             },
             AES: {
                 encrypt: function(message, key, options) {
                     options = options || {};
-                    var data = __bufferToUint8(__normalizeWordArrayInput(message));
+                    var data = __normalizeWordArrayInput(message);
                     var kBytes = __wordArrayToBytes(key);
-                    var ivBytes = __wordArrayToBytes(options.iv || '');
+                    var ivBytes = options.iv ? __wordArrayToBytes(options.iv) : new Uint8Array(0);
                     var mode = options.mode || 'AES-CBC';
                     var resBytes = typeof __crypto_aes_encrypt_raw !== 'undefined' ? __crypto_aes_encrypt_raw(mode, kBytes, ivBytes, data) : new Uint8Array(0);
-                    var wa = __wordArrayFromHex(__bytesToHex(resBytes));
+                    var wa = __bytesToWordArray(resBytes);
                     return {
                         ciphertext: wa,
                         toString: function() { return wa.toString(CryptoJS.enc.Base64); }
@@ -390,10 +410,10 @@ internal object JsBindings {
                 decrypt: function(cipher, key, options) {
                     options = options || {};
                     var data = typeof cipher === 'string'
-                        ? __binaryStringToBytes(atob(cipher))
-                        : (cipher.ciphertext ? __wordArrayToBytes(cipher.ciphertext) : __bufferToUint8(cipher));
+                        ? new Uint8Array(Array.from(atob(cipher), c => c.charCodeAt(0)))
+                        : (cipher.ciphertext ? __wordArrayToBytes(cipher.ciphertext) : __toUint8Array(cipher));
                     var kBytes = __wordArrayToBytes(key);
-                    var ivBytes = __wordArrayToBytes(options.iv || '');
+                    var ivBytes = options.iv ? __wordArrayToBytes(options.iv) : new Uint8Array(0);
                     var mode = options.mode || 'AES-CBC';
                     var resBytes = typeof __crypto_aes_decrypt_raw !== 'undefined' ? __crypto_aes_decrypt_raw(mode, kBytes, ivBytes, data) : new Uint8Array(0);
                     var plain = new TextDecoder().decode(resBytes);
@@ -406,50 +426,50 @@ internal object JsBindings {
         globalThis.crypto = {
             subtle: {
                 digest: async function(algo, data) {
-                    var bytes = __bufferToUint8(data);
+                    var bytes = __toUint8Array(data);
                     var res = typeof __crypto_digest_raw !== 'undefined' ? __crypto_digest_raw(algo.name || algo, bytes) : new Uint8Array(0);
                     return __toUint8Array(res).buffer;
                 },
                 importKey: async function(fmt, data, algo, ext, use) { return { _raw: data, _algo: algo }; },
                 deriveBits: async function(params, key, len) {
-                    var pBytes = __bufferToUint8(key._raw);
-                    var sBytes = __bufferToUint8(params.salt);
+                    var pBytes = __toUint8Array(key._raw);
+                    var sBytes = __toUint8Array(params.salt);
                     var res = typeof __crypto_pbkdf2_raw !== 'undefined' ? __crypto_pbkdf2_raw(pBytes, sBytes, params.iterations, len, params.hash) : new Uint8Array(0);
                     return __toUint8Array(res).buffer;
                 },
                 encrypt: async function(params, key, data) {
-                    var kBytes = __bufferToUint8(key._raw);
-                    var ivBytes = __bufferToUint8(params.iv || '');
-                    var dBytes = __bufferToUint8(data);
+                    var kBytes = __toUint8Array(key._raw);
+                    var ivBytes = __toUint8Array(params.iv || new Uint8Array(0));
+                    var dBytes = __toUint8Array(data);
                     var res = typeof __crypto_aes_encrypt_raw !== 'undefined' ? __crypto_aes_encrypt_raw(params.name, kBytes, ivBytes, dBytes) : new Uint8Array(0);
                     return __toUint8Array(res).buffer;
                 },
                 decrypt: async function(params, key, data) {
-                    var kBytes = __bufferToUint8(key._raw);
-                    var ivBytes = __bufferToUint8(params.iv || '');
-                    var dBytes = __bufferToUint8(data);
+                    var kBytes = __toUint8Array(key._raw);
+                    var ivBytes = __toUint8Array(params.iv || new Uint8Array(0));
+                    var dBytes = __toUint8Array(data);
                     var res = typeof __crypto_aes_decrypt_raw !== 'undefined' ? __crypto_aes_decrypt_raw(params.name, kBytes, ivBytes, dBytes) : new Uint8Array(0);
                     return __toUint8Array(res).buffer;
                 },
                 sign: async function(algo, key, data) {
                     var algoName = typeof algo === 'string' ? algo : (algo.name || '');
-                    var kBytes = __bufferToUint8(key._raw);
-                    var dBytes = __bufferToUint8(data);
+                    var kBytes = __toUint8Array(key._raw);
+                    var dBytes = __toUint8Array(data);
                     var res = typeof __crypto_sign_raw !== 'undefined' ? __crypto_sign_raw(algoName, kBytes, dBytes) : new Uint8Array(0);
                     return __toUint8Array(res).buffer;
                 },
                 verify: async function(algo, key, sig, data) {
                     var algoName = typeof algo === 'string' ? algo : (algo.name || '');
-                    var kBytes = __bufferToUint8(key._raw);
-                    var sBytes = __bufferToUint8(sig);
-                    var dBytes = __bufferToUint8(data);
+                    var kBytes = __toUint8Array(key._raw);
+                    var sBytes = __toUint8Array(sig);
+                    var dBytes = __toUint8Array(data);
                     return typeof __crypto_verify_raw !== 'undefined' ? __crypto_verify_raw(algoName, kBytes, sBytes, dBytes) : false;
                 }
             },
             getRandomValues: function(arr) {
-
-                var bytes = typeof __crypto_get_random_values !== 'undefined' ? __crypto_get_random_values(arr.length) : new Uint8Array(arr.length);
-                for (var i = 0; i < arr.length; i++) arr[i] = bytes[i];
+                if (!arr || !arr.length) return arr;
+                var res = typeof __crypto_get_random_values !== 'undefined' ? __crypto_get_random_values(arr.length) : new Uint8Array(arr.length);
+                for (var i = 0; i < arr.length; i++) arr[i] = res[i];
                 return arr;
             }
         };
