@@ -112,3 +112,77 @@ CCCryptorStatus CCCrypt(
     size_t dataOutAvailable,
     size_t *dataOutMoved
 );
+
+typedef uint32_t CCMode;
+enum {
+    kCCModeECB = 1,
+    kCCModeCBC = 2,
+    kCCModeCFB = 3,
+    kCCModeOFB = 4,
+    kCCModeCFB8 = 5,
+    kCCModeCTR = 6,
+    kCCModeF8 = 7,
+    kCCModeLRW = 8,
+    kCCModeOFB8 = 9,
+    kCCModeXTS = 10,
+    kCCModeRC4 = 11,
+    kCCModeCFB128 = 12,
+    kCCModeGCM = 13,
+    kCCModeCCM = 14,
+};
+
+typedef uint32_t CCPadding;
+enum {
+    ccNoPadding = 0,
+    ccPKCS7Padding = 1,
+};
+
+typedef uint32_t CCModeOptions;
+
+typedef struct _CCCryptor *CCCryptorRef;
+
+CCCryptorStatus CCCryptorCreateWithMode(
+    CCOperation op,
+    CCMode mode,
+    CCAlgorithm alg,
+    CCPadding padding,
+    const void *iv,
+    const void *key,
+    size_t keyLength,
+    const void *tweak,
+    size_t tweakLength,
+    int numRounds,
+    CCModeOptions options,
+    CCCryptorRef *cryptorRef
+);
+
+CCCryptorStatus CCCryptorGCMAddAAD(
+    CCCryptorRef cryptorRef,
+    const void *aData,
+    size_t aDataLen
+);
+
+CCCryptorStatus CCCryptorGCMEncrypt(
+    CCCryptorRef cryptorRef,
+    const void *dataIn,
+    size_t dataInLength,
+    void *dataOut
+);
+
+CCCryptorStatus CCCryptorGCMDecrypt(
+    CCCryptorRef cryptorRef,
+    const void *dataIn,
+    size_t dataInLength,
+    void *dataOut
+);
+
+CCCryptorStatus CCCryptorGCMFinal(
+    CCCryptorRef cryptorRef,
+    void *tag,
+    size_t *tagLength
+);
+
+CCCryptorStatus CCCryptorRelease(
+    CCCryptorRef cryptorRef
+);
+

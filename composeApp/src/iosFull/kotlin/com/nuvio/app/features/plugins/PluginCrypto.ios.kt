@@ -13,30 +13,7 @@ import kotlinx.cinterop.ptr
 import kotlinx.cinterop.value
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
-import com.nuvio.app.features.plugins.cryptointerop.CC_MD5
-import com.nuvio.app.features.plugins.cryptointerop.CC_MD5_DIGEST_LENGTH
-import com.nuvio.app.features.plugins.cryptointerop.CC_SHA1
-import com.nuvio.app.features.plugins.cryptointerop.CC_SHA1_DIGEST_LENGTH
-import com.nuvio.app.features.plugins.cryptointerop.CC_SHA256
-import com.nuvio.app.features.plugins.cryptointerop.CC_SHA256_DIGEST_LENGTH
-import com.nuvio.app.features.plugins.cryptointerop.CC_SHA512
-import com.nuvio.app.features.plugins.cryptointerop.CC_SHA512_DIGEST_LENGTH
-import com.nuvio.app.features.plugins.cryptointerop.CCHmac
-import com.nuvio.app.features.plugins.cryptointerop.kCCHmacAlgMD5
-import com.nuvio.app.features.plugins.cryptointerop.kCCHmacAlgSHA1
-import com.nuvio.app.features.plugins.cryptointerop.kCCHmacAlgSHA256
-import com.nuvio.app.features.plugins.cryptointerop.kCCHmacAlgSHA512
-import com.nuvio.app.features.plugins.cryptointerop.CCKeyDerivationPBKDF
-import com.nuvio.app.features.plugins.cryptointerop.kCCPBKDF2
-import com.nuvio.app.features.plugins.cryptointerop.kCCPRFHmacAlgSHA1
-import com.nuvio.app.features.plugins.cryptointerop.kCCPRFHmacAlgSHA256
-import com.nuvio.app.features.plugins.cryptointerop.CCCrypt
-import com.nuvio.app.features.plugins.cryptointerop.kCCDecrypt
-import com.nuvio.app.features.plugins.cryptointerop.kCCAlgorithmAES
-import com.nuvio.app.features.plugins.cryptointerop.kCCOptionECBMode
-import com.nuvio.app.features.plugins.cryptointerop.kCCEncrypt
-import com.nuvio.app.features.plugins.cryptointerop.kCCOptionPKCS7Padding
-import com.nuvio.app.features.plugins.cryptointerop.kCCSuccess
+import com.nuvio.app.features.plugins.cryptointerop.*
 import platform.Security.SecRandomCopyBytes
 import platform.Security.kSecRandomDefault
 
@@ -86,8 +63,10 @@ internal fun pluginPbkdf2(
     algorithm: String,
 ): ByteArray {
     val prf = when (algorithm.uppercase()) {
-        "SHA256" -> kCCPRFHmacAlgSHA256
-        "SHA1" -> kCCPRFHmacAlgSHA1
+        "SHA256", "HMACSHA256" -> kCCPRFHmacAlgSHA256
+        "SHA1", "HMACSHA1" -> kCCPRFHmacAlgSHA1
+        "SHA384", "HMACSHA384" -> kCCPRFHmacAlgSHA384
+        "SHA512", "HMACSHA512" -> kCCPRFHmacAlgSHA512
         else -> kCCPRFHmacAlgSHA256
     }
     
@@ -130,9 +109,82 @@ internal fun pluginAesEncrypt(
 ): ByteArray {
     val isGcm = mode.uppercase().contains("GCM")
     if (isGcm) {
-        throw UnsupportedOperationException("AES-GCM Encrypt is not yet implemented on iOS")
+        var encryptedData: ByteArray? = null
+        memScoped {
+            val cryptorRefVar = alloc<com.nuvio.app.features.plugins.cryptointerop.CCCryptorRefVar>()
+            
+            key.usePinned { pinnedKey ->
+                iv.usePinned { pinnedIv ->
+                    data.usePinned { pinnedData ->
+                        val keyPtr = if (key.isNotEmpty()) pinnedKey.addressOf(0) else null
+                        val ivPtr = if (iv.isNotEmpty()) pinnedIv.addressOf(0) else null
+                        val dataPtr = if (data.isNotEmpty()) pinnedData.addressOf(0) else null
+                        
+                        val status = CCCryptorCreateWithMode(
+                            op = kCCEncrypt,
+                            mode = kCCModeGCM,
+                            alg = kCCAlgorithmAES,
+                            padding = ccNoPadding,
+                            iv = ivPtr,
+                            key = keyPtr,
+                            keyLength = key.size.toULong(),
+                            tweak = null,
+                            tweakLength = 0UL,
+                            numRounds = 0,
+                            options = 0U,
+                            cryptorRef = cryptorRefVar.ptr
+                        )
+                        
+                        if (status != kCCSuccess) {
+                            error("CCCryptorCreateWithMode failed with status: $status")
+                        }
+                        
+                        val cryptorRef = cryptorRefVar.value ?: error("Cryptor reference was null")
+                        
+                        try {
+                            val cipherTextBytes = ByteArray(data.size)
+                            cipherTextBytes.usePinned { pinnedCipher ->
+                                val cipherPtr = if (data.isNotEmpty()) pinnedCipher.addressOf(0) else null
+                                val cryptStatus = CCCryptorGCMEncrypt(
+                                    cryptorRef = cryptorRef,
+                                    dataIn = dataPtr,
+                                    dataInLength = data.size.toULong(),
+                                    dataOut = cipherPtr
+                                )
+                                if (cryptStatus != kCCSuccess) {
+                                    error("CCCryptorGCMEncrypt failed with status: $cryptStatus")
+                                }
+                            }
+                            
+                            val tagBytes = ByteArray(16)
+                            val tagLengthVar = alloc<kotlinx.cinterop.size_tVar>()
+                            tagLengthVar.value = 16UL
+                            
+                            tagBytes.usePinned { pinnedTag ->
+                                val tagPtr = pinnedTag.addressOf(0)
+                                val finalStatus = CCCryptorGCMFinal(
+                                    cryptorRef = cryptorRef,
+                                    tag = tagPtr,
+                                    tagLength = tagLengthVar.ptr
+                                )
+                                if (finalStatus != kCCSuccess) {
+                                    error("CCCryptorGCMFinal failed with status: $finalStatus")
+                                }
+                            }
+                            
+                            encryptedData = cipherTextBytes + tagBytes
+                        } finally {
+                            CCCryptorRelease(cryptorRef)
+                        }
+                    }
+                }
+            }
+        }
+        return encryptedData ?: ByteArray(0)
     }
+    
     val isEcb = mode.uppercase().contains("ECB")
+    val isNoPadding = mode.uppercase().contains("NOPADDING")
 
     val dataOutAvailable = data.size + 16 // AES block size
     val dataOut = ByteArray(dataOutAvailable)
@@ -142,10 +194,12 @@ internal fun pluginAesEncrypt(
     memScoped {
         val dataOutMoved = alloc<kotlinx.cinterop.size_tVar>()
         
-        val options = if (isEcb) {
-            kCCOptionPKCS7Padding or kCCOptionECBMode
-        } else {
-            kCCOptionPKCS7Padding
+        var options = 0U
+        if (isEcb) {
+            options = options or kCCOptionECBMode
+        }
+        if (!isNoPadding) {
+            options = options or kCCOptionPKCS7Padding
         }
 
         key.usePinned { pinnedKey ->
@@ -189,9 +243,87 @@ internal fun pluginAesDecrypt(
 ): ByteArray {
     val isGcm = mode.uppercase().contains("GCM")
     if (isGcm) {
-        throw UnsupportedOperationException("AES-GCM Decrypt is not yet implemented on iOS")
+        require(data.size >= 16) { "Data too short for GCM decryption" }
+        val ciphertextLen = data.size - 16
+        val ciphertext = data.copyOfRange(0, ciphertextLen)
+        val tagBytes = data.copyOfRange(ciphertextLen, data.size)
+        
+        var decryptedData: ByteArray? = null
+        
+        memScoped {
+            val cryptorRefVar = alloc<com.nuvio.app.features.plugins.cryptointerop.CCCryptorRefVar>()
+            
+            key.usePinned { pinnedKey ->
+                iv.usePinned { pinnedIv ->
+                    ciphertext.usePinned { pinnedCipher ->
+                        tagBytes.usePinned { pinnedTag ->
+                            val keyPtr = if (key.isNotEmpty()) pinnedKey.addressOf(0) else null
+                            val ivPtr = if (iv.isNotEmpty()) pinnedIv.addressOf(0) else null
+                            val cipherPtr = if (ciphertext.isNotEmpty()) pinnedCipher.addressOf(0) else null
+                            val tagPtr = pinnedTag.addressOf(0)
+                            
+                            val status = CCCryptorCreateWithMode(
+                                op = kCCDecrypt,
+                                mode = kCCModeGCM,
+                                alg = kCCAlgorithmAES,
+                                padding = ccNoPadding,
+                                iv = ivPtr,
+                                key = keyPtr,
+                                keyLength = key.size.toULong(),
+                                tweak = null,
+                                tweakLength = 0UL,
+                                numRounds = 0,
+                                options = 0U,
+                                cryptorRef = cryptorRefVar.ptr
+                            )
+                            
+                            if (status != kCCSuccess) {
+                                error("CCCryptorCreateWithMode failed with status: $status")
+                            }
+                            
+                            val cryptorRef = cryptorRefVar.value ?: error("Cryptor reference was null")
+                            
+                            try {
+                                val plainTextBytes = ByteArray(ciphertextLen)
+                                plainTextBytes.usePinned { pinnedPlain ->
+                                    val plainPtr = if (ciphertextLen > 0) pinnedPlain.addressOf(0) else null
+                                    val cryptStatus = CCCryptorGCMDecrypt(
+                                        cryptorRef = cryptorRef,
+                                        dataIn = cipherPtr,
+                                        dataInLength = ciphertextLen.toULong(),
+                                        dataOut = plainPtr
+                                    )
+                                    if (cryptStatus != kCCSuccess) {
+                                        error("CCCryptorGCMDecrypt failed with status: $cryptStatus")
+                                    }
+                                }
+                                
+                                val tagLengthVar = alloc<kotlinx.cinterop.size_tVar>()
+                                tagLengthVar.value = 16UL
+                                
+                                val finalStatus = CCCryptorGCMFinal(
+                                    cryptorRef = cryptorRef,
+                                    tag = tagPtr,
+                                    tagLength = tagLengthVar.ptr
+                                )
+                                if (finalStatus != kCCSuccess) {
+                                    error("CCCryptorGCMFinal failed with status: $finalStatus (tag verification failed)")
+                                }
+                                
+                                decryptedData = plainTextBytes
+                            } finally {
+                                CCCryptorRelease(cryptorRef)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return decryptedData ?: ByteArray(0)
     }
+    
     val isEcb = mode.uppercase().contains("ECB")
+    val isNoPadding = mode.uppercase().contains("NOPADDING")
 
     val dataOutAvailable = data.size + 16 // AES block size
     val dataOut = ByteArray(dataOutAvailable)
@@ -201,10 +333,12 @@ internal fun pluginAesDecrypt(
     memScoped {
         val dataOutMoved = alloc<kotlinx.cinterop.size_tVar>()
         
-        val options = if (isEcb) {
-            kCCOptionPKCS7Padding or kCCOptionECBMode
-        } else {
-            kCCOptionPKCS7Padding
+        var options = 0U
+        if (isEcb) {
+            options = options or kCCOptionECBMode
+        }
+        if (!isNoPadding) {
+            options = options or kCCOptionPKCS7Padding
         }
 
         key.usePinned { pinnedKey ->
@@ -326,7 +460,12 @@ internal fun pluginBase64Encode(data: String): String =
 
 @OptIn(ExperimentalEncodingApi::class)
 internal fun pluginBase64Decode(data: String): String {
-    val normalized = data.trim().replace("\n", "").replace("\r", "").replace(" ", "")
+    var normalized = data.trim().replace("\n", "").replace("\r", "").replace(" ", "")
+    normalized = normalized.replace("-", "+").replace("_", "/")
+    val padNeeded = (4 - (normalized.length % 4)) % 4
+    if (padNeeded > 0) {
+        normalized += "=".repeat(padNeeded)
+    }
     val decoded = Base64.decode(normalized)
     return decoded.decodeToString()
 }

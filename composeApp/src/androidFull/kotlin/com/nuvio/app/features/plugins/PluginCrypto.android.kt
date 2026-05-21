@@ -35,15 +35,54 @@ internal fun pluginPbkdf2(
     keySizeBits: Int,
     algorithm: String,
 ): ByteArray {
-    val normalizedAlgo = when (algorithm.uppercase()) {
-        "SHA256" -> "PBKDF2WithHmacSHA256"
-        "SHA1" -> "PBKDF2WithHmacSHA1"
-        else -> "PBKDF2WithHmacSHA256"
+    val prfAlgo = when (algorithm.uppercase()) {
+        "SHA256", "HMACSHA256" -> "HmacSHA256"
+        "SHA1", "HMACSHA1" -> "HmacSHA1"
+        "SHA512", "HMACSHA512" -> "HmacSHA512"
+        "MD5", "HMACMD5" -> "HmacMD5"
+        else -> "HmacSHA256"
     }
-    val factory = SecretKeyFactory.getInstance(normalizedAlgo)
-    val passChars = password.map { (it.toInt() and 0xFF).toChar() }.toCharArray()
-    val spec = PBEKeySpec(passChars, salt, iterations, keySizeBits)
-    return factory.generateSecret(spec).encoded
+    val mac = Mac.getInstance(prfAlgo)
+    mac.init(SecretKeySpec(password, prfAlgo))
+    
+    val hLen = mac.macLength
+    val dkLen = keySizeBits / 8
+    val dk = ByteArray(dkLen)
+    
+    val blocks = (dkLen + hLen - 1) / hLen
+    val u = ByteArray(hLen)
+    val t = ByteArray(hLen)
+    
+    val blockIndexBytes = ByteArray(4)
+    
+    for (i in 1..blocks) {
+        mac.reset()
+        mac.update(salt)
+        blockIndexBytes[0] = (i ushr 24).toByte()
+        blockIndexBytes[1] = (i ushr 16).toByte()
+        blockIndexBytes[2] = (i ushr 8).toByte()
+        blockIndexBytes[3] = i.toByte()
+        mac.update(blockIndexBytes)
+        
+        val u1 = mac.doFinal()
+        u1.copyInto(t)
+        u1.copyInto(u)
+        
+        for (j in 2..iterations) {
+            mac.reset()
+            val uj = mac.doFinal(u)
+            uj.copyInto(u)
+            for (k in 0 until hLen) {
+                t[k] = (t[k].toInt() xor uj[k].toInt()).toByte()
+            }
+        }
+        
+        val offset = (i - 1) * hLen
+        val len = minOf(hLen, dkLen - offset)
+        t.copyInto(dk, destinationOffset = offset, startIndex = 0, endIndex = len)
+    }
+    
+    return dk
 }
 
 internal fun pluginAesEncrypt(
@@ -161,7 +200,13 @@ internal fun pluginBase64Encode(data: String): String =
 
 @OptIn(ExperimentalEncodingApi::class)
 internal fun pluginBase64Decode(data: String): String {
-    val normalized = data.trim().replace("\n", "").replace("\r", "").replace(" ", "")
+    var normalized = data.trim().replace("\n", "").replace("\r", "").replace(" ", "")
+    // Robust URL-safe base64 decoding fallback
+    normalized = normalized.replace("-", "+").replace("_", "/")
+    val padNeeded = (4 - (normalized.length % 4)) % 4
+    if (padNeeded > 0) {
+        normalized += "=".repeat(padNeeded)
+    }
     val decoded = Base64.decode(normalized)
     return decoded.decodeToString()
 }
