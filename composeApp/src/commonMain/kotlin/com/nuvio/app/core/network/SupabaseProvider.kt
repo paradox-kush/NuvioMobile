@@ -35,7 +35,7 @@ object SupabaseProvider {
             ?.takeIf { it.backend.hasSameConnectionIdentity(config) }
             ?.let { return it.client }
 
-        val userAgent = "NuvioMobile/${AppVersionConfig.VERSION_NAME.ifBlank { "dev" }}"
+        val userAgent = "Tuvora/${AppVersionConfig.VERSION_NAME.ifBlank { "dev" }}"
         val nextClient = createSupabaseClient(
             supabaseUrl = config.normalizedSupabaseUrl,
             supabaseKey = config.anonKey,

@@ -1487,7 +1487,7 @@ private fun DebridDeviceAuthDialog(
             }
         }
         val startResult = runCatching {
-            DebridProviderApis.apiFor(provider.id)?.startDeviceAuthorization("Nuvio")
+            DebridProviderApis.apiFor(provider.id)?.startDeviceAuthorization("Tuvora")
         }.onFailure { error ->
             if (error is CancellationException) throw error
         }
