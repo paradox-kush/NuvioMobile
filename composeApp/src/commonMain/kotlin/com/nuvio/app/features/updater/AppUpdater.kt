@@ -54,10 +54,9 @@ import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
 
-private const val gitHubOwner = "NuvioMedia"
+private const val gitHubOwner = "paradox-kush"
 private const val gitHubRepo = "NuvioMobile"
 private const val gitHubApiBase = "https://api.github.com"
-private const val releaseChannelBranch = "cmp-rewrite"
 
 data class AppUpdate(
     val tag: String,
@@ -154,7 +153,7 @@ private object AppUpdaterRepository {
             url = "$gitHubApiBase/repos/$gitHubOwner/$gitHubRepo/releases?per_page=20",
             headers = mapOf(
                 "Accept" to "application/vnd.github+json",
-                "User-Agent" to "NuvioMobile",
+                "User-Agent" to "Tuvora",
             ),
             body = "",
         )
@@ -163,7 +162,7 @@ private object AppUpdaterRepository {
         }
 
         val releases = appUpdaterJson.decodeFromString<List<GitHubReleaseDto>>(response.body)
-        val release = releases.firstOrNull { it.matchesRequestedChannel() && !it.draft && !it.prerelease }
+        val release = releases.firstOrNull { !it.draft && !it.prerelease }
             ?: throw NoChannelReleaseException()
 
         val tag = release.tagName?.takeIf { it.isNotBlank() }
@@ -182,17 +181,6 @@ private object AppUpdaterRepository {
             assetUrl = asset.browserDownloadUrl,
             assetSizeBytes = asset.size,
         )
-    }
-
-    private fun GitHubReleaseDto.matchesRequestedChannel(): Boolean {
-        val channel = releaseChannelBranch
-        if (targetCommitish?.trim()?.equals(channel, ignoreCase = true) == true) {
-            return true
-        }
-
-        return listOf(tagName, name)
-            .filterNotNull()
-            .any { value -> value.contains(channel, ignoreCase = true) }
     }
 
     private fun chooseBestApkAsset(assets: List<GitHubAssetDto>): GitHubAssetDto? {
