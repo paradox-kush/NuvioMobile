@@ -22,6 +22,8 @@
 
 Tuvora is the current Kotlin Multiplatform rewrite of the original React Native app. It delivers a shared Compose UI for Android and iOS while keeping the playback-focused experience, collection tools, watch progress flows, downloads, and Stremio addon ecosystem integration that shaped the earlier app.
 
+Tuvora is built on Nuvio by NuvioMedia.
+
 The mobile app is built from a single shared codebase in [composeApp](./composeApp), with native platform entry points for Android and iOS.
 
 ## Installation
