@@ -98,8 +98,17 @@ object XtreamRepository {
 
     fun clearError() = _uiState.update { it.copy(error = null) }
 
+    /** Replace this profile's accounts from a remote pull WITHOUT echoing a push back. */
+    fun applyFromRemote(profileId: Int, accounts: List<XtreamAccount>) {
+        loaded = true
+        currentProfileId = profileId
+        _uiState.update { it.copy(accounts = accounts) }
+        XtreamAccountStorage.saveAccountsJson(profileId, json.encodeToString(accounts))
+    }
+
     private fun persist() {
         XtreamAccountStorage.saveAccountsJson(currentProfileId, json.encodeToString(_uiState.value.accounts))
+        XtreamAccountSyncService.triggerPush()
     }
 
     private fun parse(stored: String?): List<XtreamAccount> {

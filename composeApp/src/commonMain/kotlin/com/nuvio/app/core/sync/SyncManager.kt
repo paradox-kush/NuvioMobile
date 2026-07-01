@@ -7,6 +7,7 @@ import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.collection.CollectionSyncService
 import com.nuvio.app.features.home.HomeCatalogSettingsSyncService
+import com.nuvio.app.features.iptv.XtreamAccountSyncService
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.profiles.ProfileRepository
@@ -73,6 +74,10 @@ object SyncManager {
             launch {
                 runCatching { HomeCatalogSettingsSyncService.pullFromServer(profileId) }
                     .onFailure { log.e(it) { "HomeCatalogSettings pull failed" } }
+            }
+            launch {
+                runCatching { XtreamAccountSyncService.pullFromServer(profileId) }
+                    .onFailure { log.e(it) { "Xtream accounts pull failed" } }
             }
 
             log.i { "pullAllForProfile($profileId) — all pulls launched" }
