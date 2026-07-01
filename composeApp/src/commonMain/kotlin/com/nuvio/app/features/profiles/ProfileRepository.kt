@@ -159,6 +159,12 @@ object ProfileRepository {
         if (com.nuvio.app.core.build.AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.onProfileChanged(profileIndex)
         }
+        // IPTV: reload accounts + recents for the new profile, drop cross-profile caches.
+        com.nuvio.app.features.iptv.XtreamRepository.onProfileChanged(profileIndex)
+        com.nuvio.app.features.iptv.XtreamLiveRecents.onProfileChanged(profileIndex)
+        com.nuvio.app.features.iptv.XtreamItemRegistry.resetForProfile()
+        com.nuvio.app.features.iptv.XtreamHubRepository.resetForProfile()
+        com.nuvio.app.features.iptv.XtreamSearchIndex.resetForProfile()
         ThemeSettingsRepository.onProfileChanged()
         PosterCardStyleRepository.onProfileChanged()
         PlayerSettingsRepository.onProfileChanged()

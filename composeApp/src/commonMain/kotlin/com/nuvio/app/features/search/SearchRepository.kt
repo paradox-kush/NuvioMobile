@@ -20,7 +20,10 @@ import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.filterReleasedItems
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import kotlinx.coroutines.CancellationException
+import com.nuvio.app.features.iptv.XtreamRepository
+import com.nuvio.app.features.iptv.XtreamSearchIndex
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -54,25 +57,25 @@ object SearchRepository {
             return
         }
 
-        val activeAddons = addons.enabledAddons().filter { it.manifest != null }
-        if (activeAddons.isEmpty()) {
-            activeJob?.cancel()
-            lastRequestKey = null
-            _uiState.value = SearchUiState(
-                emptyStateReason = SearchEmptyStateReason.NoActiveAddons,
-            )
-            return
-        }
+        XtreamRepository.ensureLoaded()
+        val xtreamEnabled = XtreamRepository.uiState.value.accounts.any { it.enabled }
 
-        val requests = buildSearchRequests(
-            addons = activeAddons,
-            query = normalizedQuery,
-        )
-        if (requests.isEmpty()) {
+        val activeAddons = addons.enabledAddons().filter { it.manifest != null }
+        val requests = if (activeAddons.isEmpty()) {
+            emptyList()
+        } else {
+            buildSearchRequests(addons = activeAddons, query = normalizedQuery)
+        }
+        // Xtream can carry search on its own (the dev build often has no addons installed).
+        if (requests.isEmpty() && !xtreamEnabled) {
             activeJob?.cancel()
             lastRequestKey = null
             _uiState.value = SearchUiState(
-                emptyStateReason = SearchEmptyStateReason.NoSearchCatalogs,
+                emptyStateReason = if (activeAddons.isEmpty()) {
+                    SearchEmptyStateReason.NoActiveAddons
+                } else {
+                    SearchEmptyStateReason.NoSearchCatalogs
+                },
             )
             return
         }
@@ -81,6 +84,8 @@ object SearchRepository {
             append(normalizedQuery.lowercase())
             append('|')
             append(HomeCatalogSettingsRepository.snapshot().hideUnreleasedContent)
+            append('|')
+            append("xtream=$xtreamEnabled")
             append('|')
             append(
                 requests.joinToString(separator = "|") { request ->
@@ -95,6 +100,13 @@ object SearchRepository {
         _uiState.value = SearchUiState(isLoading = true)
 
         activeJob = scope.launch {
+            val xtreamDeferred = async {
+                if (xtreamEnabled) {
+                    runCatching { XtreamSearchIndex.search(normalizedQuery) }.getOrDefault(emptyList())
+                } else {
+                    emptyList()
+                }
+            }
             val resultChannel = Channel<IndexedSearchResult>(Channel.UNLIMITED)
             val jobs = requests.mapIndexed { index, request ->
                 launch {
@@ -143,19 +155,21 @@ object SearchRepository {
             }
 
             val completedResults = results.filterNotNull()
-            val sections = results.orderedSections()
+            val addonSections = results.orderedSections()
+            val xtreamSections = xtreamDeferred.await()
+            val sections = addonSections + xtreamSections
             val firstFailure = completedResults.firstNotNullOfOrNull { it.error?.message }
-            val allFailed = completedResults.isNotEmpty() && completedResults.all { it.error != null }
+            val allAddonsFailed = completedResults.isNotEmpty() && completedResults.all { it.error != null }
 
             _uiState.value = SearchUiState(
                 isLoading = false,
                 sections = sections,
                 emptyStateReason = when {
                     sections.isNotEmpty() -> null
-                    allFailed -> SearchEmptyStateReason.RequestFailed
+                    allAddonsFailed -> SearchEmptyStateReason.RequestFailed
                     else -> SearchEmptyStateReason.NoResults
                 },
-                errorMessage = if (allFailed) firstFailure else null,
+                errorMessage = if (allAddonsFailed && xtreamSections.isEmpty()) firstFailure else null,
             )
         }
     }

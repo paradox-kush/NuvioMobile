@@ -11,6 +11,7 @@ import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DebridStreamPresentation
 import com.nuvio.app.features.debrid.LocalDebridAvailabilityService
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.pluginContentId
@@ -151,6 +152,39 @@ object StreamsRepository {
                 activeAddonIds = setOf("embedded"),
                 isAnyLoading = false,
             )
+            return
+        }
+
+        // Xtream IPTV: a namespaced id resolves to one direct stream — no addons/debrid.
+        // (Series episodes are already handled by embedded streams above; this covers VOD
+        // movies, which have no videos, and any registered live channel.)
+        if (XtreamItemRegistry.isXtreamId(videoId)) {
+            val xtreamStream = XtreamItemRegistry.streamItemFor(videoId)
+            if (xtreamStream != null) {
+                val group = AddonStreamGroup(
+                    addonName = xtreamStream.addonName,
+                    addonId = "xtream",
+                    streams = listOf(xtreamStream),
+                    isLoading = false,
+                )
+                val presentedGroup = StreamBadgePresentation.apply(
+                    groups = listOf(group),
+                    rules = streamBadgeRules,
+                ).firstOrNull() ?: group
+                _uiState.value = StreamsUiState(
+                    requestToken = requestToken,
+                    groups = listOf(presentedGroup),
+                    activeAddonIds = setOf("xtream"),
+                    isAnyLoading = false,
+                )
+            } else {
+                log.w { "Xtream stream short-circuit: no registered item for id=$videoId" }
+                _uiState.value = StreamsUiState(
+                    requestToken = requestToken,
+                    isAnyLoading = false,
+                    emptyStateReason = StreamsEmptyStateReason.NoStreamsFound,
+                )
+            }
             return
         }
 

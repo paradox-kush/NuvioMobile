@@ -2,6 +2,7 @@ package com.nuvio.app.features.settings
 
 import androidx.compose.foundation.lazy.LazyListScope
 import nuvio.composeapp.generated.resources.compose_settings_page_debrid
+import nuvio.composeapp.generated.resources.compose_settings_page_iptv
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_settings_page_mdblist_ratings
 import nuvio.composeapp.generated.resources.compose_settings_page_tmdb_enrichment
@@ -16,6 +17,7 @@ internal fun LazyListScope.integrationsContent(
     onTmdbClick: () -> Unit,
     onMdbListClick: () -> Unit,
     onDebridClick: () -> Unit,
+    onIptvClick: () -> Unit,
 ) {
     item {
         SettingsSection(
@@ -44,6 +46,13 @@ internal fun LazyListScope.integrationsContent(
                     description = stringResource(Res.string.settings_integrations_debrid_description),
                     isTablet = isTablet,
                     onClick = onDebridClick,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsNavigationRow(
+                    title = stringResource(Res.string.compose_settings_page_iptv),
+                    description = "Live TV, movies & series from an Xtream provider",
+                    isTablet = isTablet,
+                    onClick = onIptvClick,
                 )
             }
         }

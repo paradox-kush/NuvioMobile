@@ -68,6 +68,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawableResource(R.color.nuvio_background)
         AddonStorage.initialize(applicationContext)
+        com.nuvio.app.features.iptv.XtreamAccountStorage.initialize(applicationContext)
         AuthStorage.initialize(applicationContext)
         SyncBackendStorage.initialize(applicationContext)
         LibraryStorage.initialize(applicationContext)

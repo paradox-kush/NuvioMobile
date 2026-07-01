@@ -108,8 +108,14 @@ actual fun PlatformPlayerSurface(
         normalizeStreamType(streamType).orEmpty(),
         useYoutubeChunkedPlayback,
     )
+    // Live IPTV is raw continuous MPEG-TS, which ExoPlayer can't sustain (buffers forever) —
+    // force libmpv regardless of the user's engine setting. VOD/series keep their choice.
+    val forceLibmpvForLive = normalizeStreamType(streamType) == "live"
     var activeEngine by remember(playerSourceKey, playerSettings.androidPlaybackEngine) {
-        mutableStateOf(playerSettings.androidPlaybackEngine.initialAndroidEngine())
+        mutableStateOf(
+            if (forceLibmpvForLive) ResolvedAndroidPlaybackEngine.Libmpv
+            else playerSettings.androidPlaybackEngine.initialAndroidEngine()
+        )
     }
 
     when (activeEngine) {

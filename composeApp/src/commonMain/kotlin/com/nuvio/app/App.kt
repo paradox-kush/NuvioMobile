@@ -28,6 +28,11 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LiveTv
+import com.nuvio.app.features.iptv.XtreamHubScreen
+import com.nuvio.app.features.iptv.XtreamItemRegistry
+import com.nuvio.app.features.iptv.XtreamLiveRecents
+import com.nuvio.app.features.iptv.XtreamRepository
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -135,6 +140,7 @@ import com.nuvio.app.features.details.PersonDetailScreen
 import com.nuvio.app.features.details.TmdbEntityBrowseScreen
 import com.nuvio.app.features.tmdb.TmdbEntityKind
 import com.nuvio.app.features.home.HomeCatalogSection
+import com.nuvio.app.features.home.PosterShape
 import com.nuvio.app.features.home.HomeScreen
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.library.LibraryItem
@@ -343,14 +349,18 @@ enum class AppScreenTab {
     Home,
     Search,
     Library,
+    Iptv,
     Settings,
 }
 
-private fun AppScreenTab.toNativeNavigationTab(): NativeNavigationTab = when (this) {
+// null for tabs the iOS liquid-glass native tab bar doesn't carry (IPTV isn't in the native
+// bar yet — needs Swift work; on Android the Compose nav bar renders it).
+private fun AppScreenTab.toNativeNavigationTab(): NativeNavigationTab? = when (this) {
     AppScreenTab.Home -> NativeNavigationTab.Home
     AppScreenTab.Search -> NativeNavigationTab.Search
     AppScreenTab.Library -> NativeNavigationTab.Library
     AppScreenTab.Settings -> NativeNavigationTab.Settings
+    AppScreenTab.Iptv -> null
 }
 
 private fun NativeNavigationTab.toAppScreenTab(): AppScreenTab = when (this) {
@@ -788,6 +798,7 @@ private fun MainAppContent(
                 searchScrollToTopRequests.tryEmit(Unit)
             }
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
+            AppScreenTab.Iptv -> {}
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
         }
     }
@@ -823,7 +834,7 @@ private fun MainAppContent(
     }
 
     LaunchedEffect(selectedTab) {
-        NativeTabBridge.publishSelectedTab(selectedTab.toNativeNavigationTab())
+        selectedTab.toNativeNavigationTab()?.let { NativeTabBridge.publishSelectedTab(it) }
         if (selectedTab != AppScreenTab.Search) {
             searchFocusRequestCount = 0
         }
@@ -955,6 +966,30 @@ private fun MainAppContent(
     var resumePromptItem by remember { mutableStateOf<ContinueWatchingItem?>(null) }
     var lastExternalPlayerLaunch by remember { mutableStateOf<PlayerLaunch?>(null) }
     val activePlaybackProfileId = profileState.activeProfile?.profileIndex ?: ProfileRepository.activeProfileId
+
+    // Shared launch for an Xtream LIVE channel (from the hub or the Library) — forces libmpv via
+    // streamType="live". The URL is rebuilt from the id when the caller doesn't have one (e.g. a
+    // favorite opened from the Library after a fresh launch, when the registry is empty).
+    fun playLiveXtreamChannel(contentId: String, name: String, logo: String?, url: String?) {
+        val resolvedUrl = url ?: XtreamItemRegistry.liveStreamUrlFor(contentId) ?: return
+        XtreamLiveRecents.record(contentId, name, logo)
+        val liveLaunch = PlayerLaunch(
+            profileId = activePlaybackProfileId,
+            title = name,
+            sourceUrl = resolvedUrl,
+            streamTitle = name,
+            streamType = "live",
+            providerName = XtreamItemRegistry.accountNameFor(contentId) ?: "Xtream",
+            providerAddonId = "xtream",
+            logo = logo,
+            contentType = "live",
+            videoId = contentId,
+            parentMetaId = contentId,
+            parentMetaType = "tv",
+        )
+        navController.navigate(PlayerRoute(launchId = PlayerLaunchStore.put(liveLaunch)))
+    }
+
     val launchExternalPlayer = rememberExternalPlayerLauncher { result ->
         if (result != null && result.positionMs > 0L) {
             coroutineScope.launch {
@@ -1501,6 +1536,12 @@ private fun MainAppContent(
                                             contentDescription = stringResource(Res.string.compose_nav_library),
                                         )
                                         NavItem(
+                                            selected = selectedTab == AppScreenTab.Iptv,
+                                            onClick = { handleRootTabClick(AppScreenTab.Iptv) },
+                                            icon = Icons.Filled.LiveTv,
+                                            contentDescription = "IPTV",
+                                        )
+                                        NavItem(
                                             selected = selectedTab == AppScreenTab.Settings,
                                             onClick = { handleRootTabClick(AppScreenTab.Settings) },
                                         ) {
@@ -1533,13 +1574,64 @@ private fun MainAppContent(
                                         animateHomeCollectionGifs = tabsRouteActive,
                                         onCatalogClick = onCatalogClick,
                                         onPosterClick = { meta ->
-                                            navController.navigate(DetailRoute(type = meta.type, id = meta.id))
+                                            // A live channel (e.g. from Search) has no detail — play it directly.
+                                            if (XtreamItemRegistry.isLiveId(meta.id)) {
+                                                playLiveXtreamChannel(
+                                                    contentId = meta.id,
+                                                    name = meta.name,
+                                                    logo = meta.logo ?: meta.poster,
+                                                    url = XtreamItemRegistry.get(meta.id)?.streamUrl,
+                                                )
+                                            } else {
+                                                navController.navigate(DetailRoute(type = meta.type, id = meta.id))
+                                            }
                                         },
                                         onPosterLongClick = { meta ->
                                             openPosterActions(PosterActionTarget(preview = meta))
                                         },
+                                        onIptvAddProvider = {
+                                            requestedSettingsPageName = "Iptv"
+                                            selectedTab = AppScreenTab.Settings
+                                        },
+                                        onPlayLiveChannel = { contentId ->
+                                            val item = XtreamItemRegistry.get(contentId)
+                                            playLiveXtreamChannel(
+                                                contentId = contentId,
+                                                name = item?.name ?: "Live TV",
+                                                logo = item?.logo ?: item?.poster,
+                                                url = item?.streamUrl,
+                                            )
+                                        },
+                                        onIptvFavoriteChannel = { contentId ->
+                                            XtreamItemRegistry.get(contentId)?.let { item ->
+                                                LibraryRepository.toggleSaved(
+                                                    LibraryItem(
+                                                        id = contentId,
+                                                        type = "tv",
+                                                        name = item.name,
+                                                        poster = item.logo ?: item.poster,
+                                                        logo = item.logo,
+                                                        posterShape = PosterShape.Landscape,
+                                                        savedAtEpochMs = 0L, // set by LibraryRepository.save()
+                                                    )
+                                                )
+                                                NuvioToastController.show(
+                                                    if (LibraryRepository.isSaved(contentId, "tv")) "Added to Library" else "Removed from Library"
+                                                )
+                                            }
+                                        },
                                         onLibraryPosterClick = { item ->
-                                            navController.navigate(DetailRoute(type = item.type, id = item.id))
+                                            if (XtreamItemRegistry.isLiveId(item.id)) {
+                                                // Live channels have no detail screen — play directly (mpv).
+                                                playLiveXtreamChannel(
+                                                    contentId = item.id,
+                                                    name = item.name,
+                                                    logo = item.logo ?: item.poster,
+                                                    url = XtreamItemRegistry.get(item.id)?.streamUrl,
+                                                )
+                                            } else {
+                                                navController.navigate(DetailRoute(type = item.type, id = item.id))
+                                            }
                                         },
                                         onLibraryPosterLongClick = { item, section ->
                                             openPosterActions(
@@ -3007,6 +3099,9 @@ private fun AppTabHost(
     onCatalogClick: ((HomeCatalogSection) -> Unit)? = null,
     onPosterClick: ((MetaPreview) -> Unit)? = null,
     onPosterLongClick: ((MetaPreview) -> Unit)? = null,
+    onIptvAddProvider: () -> Unit = {},
+    onPlayLiveChannel: (String) -> Unit = {},
+    onIptvFavoriteChannel: (String) -> Unit = {},
     onLibraryPosterClick: ((LibraryItem) -> Unit)? = null,
     onLibraryPosterLongClick: ((LibraryItem, LibrarySection) -> Unit)? = null,
     onLibrarySectionViewAllClick: ((LibrarySection) -> Unit)? = null,
@@ -3070,6 +3165,16 @@ private fun AppTabHost(
                         onSectionViewAllClick = onLibrarySectionViewAllClick,
                         onCloudFilePlay = onCloudFilePlay,
                         onConnectCloudClick = onConnectCloudClick,
+                    )
+                }
+
+                AppScreenTab.Iptv -> {
+                    XtreamHubScreen(
+                        modifier = Modifier.fillMaxSize(),
+                        onPosterClick = { meta -> onPosterClick?.invoke(meta) },
+                        onPlayLiveChannel = onPlayLiveChannel,
+                        onFavoriteLiveChannel = onIptvFavoriteChannel,
+                        onAddProvider = onIptvAddProvider,
                     )
                 }
 
@@ -3171,6 +3276,23 @@ private fun TabletFloatingTopBar(
                             contentDescription = stringResource(Res.string.compose_nav_library),
                             modifier = Modifier.size(NuvioTokens.Space.s18),
                             tint = if (selectedTab == AppScreenTab.Library) {
+                                tokens.colors.textPrimary
+                            } else {
+                                tokens.colors.textMuted
+                            },
+                        )
+                    },
+                )
+                TabletTopPillItem(
+                    label = "IPTV",
+                    selected = selectedTab == AppScreenTab.Iptv,
+                    onClick = { onTabSelected(AppScreenTab.Iptv) },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Filled.LiveTv,
+                            contentDescription = "IPTV",
+                            modifier = Modifier.size(NuvioTokens.Space.s18),
+                            tint = if (selectedTab == AppScreenTab.Iptv) {
                                 tokens.colors.textPrimary
                             } else {
                                 tokens.colors.textMuted

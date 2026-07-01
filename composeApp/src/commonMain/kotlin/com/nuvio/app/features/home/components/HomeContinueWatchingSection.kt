@@ -189,6 +189,7 @@ internal fun HomeContinueWatchingSection(
     modifier: Modifier = Modifier,
     sectionPadding: Dp? = null,
     layout: ContinueWatchingLayout? = null,
+    title: String? = null,
     onItemClick: ((ContinueWatchingItem) -> Unit)? = null,
     onItemLongPress: ((ContinueWatchingItem) -> Unit)? = null,
 ) {
@@ -203,6 +204,7 @@ internal fun HomeContinueWatchingSection(
             modifier = modifier.fillMaxWidth(),
             sectionPadding = sectionPadding,
             layout = layout,
+            title = title,
             onItemClick = onItemClick,
             onItemLongPress = onItemLongPress,
         )
@@ -216,6 +218,7 @@ internal fun HomeContinueWatchingSection(
                 modifier = Modifier.fillMaxWidth(),
                 sectionPadding = homeSectionHorizontalPaddingForWidth(maxWidth.value),
                 layout = rememberContinueWatchingLayout(maxWidth.value),
+                title = title,
                 onItemClick = onItemClick,
                 onItemLongPress = onItemLongPress,
             )
@@ -232,6 +235,7 @@ private fun HomeContinueWatchingSectionContent(
     modifier: Modifier,
     sectionPadding: Dp,
     layout: ContinueWatchingLayout,
+    title: String?,
     onItemClick: ((ContinueWatchingItem) -> Unit)?,
     onItemLongPress: ((ContinueWatchingItem) -> Unit)?,
 ) {
@@ -241,7 +245,7 @@ private fun HomeContinueWatchingSectionContent(
     }.collectAsStateWithLifecycle()
 
     NuvioShelfSection(
-        title = stringResource(Res.string.compose_settings_page_continue_watching),
+        title = title ?: stringResource(Res.string.compose_settings_page_continue_watching),
         entries = items,
         modifier = modifier,
         headerHorizontalPadding = sectionPadding,

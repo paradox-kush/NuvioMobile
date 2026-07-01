@@ -8,6 +8,12 @@ import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.addons.httpGetText
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.filterReleasedItems
+import com.nuvio.app.features.iptv.XtreamClient
+import com.nuvio.app.features.iptv.XtreamItemRegistry
+import com.nuvio.app.features.iptv.XtreamKind
+import com.nuvio.app.features.iptv.XtreamRepository
+import com.nuvio.app.features.iptv.XtreamResolvedItem
+import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.mdblist.MdbListMetadataService
 import com.nuvio.app.features.mdblist.MdbListSettingsRepository
 import com.nuvio.app.features.tmdb.TmdbMetadataService
@@ -112,6 +118,10 @@ object MetaDetailsRepository {
         _uiState.value = MetaDetailsUiState(isLoading = true)
 
         scope.launch {
+            if (XtreamItemRegistry.isXtreamId(id)) {
+                loadXtreamMeta(requestKey = requestKey, id = id)
+                return@launch
+            }
             val metaLookupId = resolveMetaLookupId(itemId = id, itemType = type)
             val manifests = findMetaManifests(type = type, id = metaLookupId)
 
@@ -524,5 +534,119 @@ object MetaDetailsRepository {
         }
 
         return emptyList()
+    }
+
+    // --- Xtream IPTV short-circuit (bypasses addons; native detail for VOD/series) ---
+
+    private suspend fun loadXtreamMeta(requestKey: String, id: String) {
+        XtreamRepository.ensureLoaded()
+        val parsed = XtreamItemRegistry.parseId(id)
+        val account = parsed?.let { p -> XtreamRepository.uiState.value.accounts.firstOrNull { it.id == p.accountId } }
+        if (parsed == null || account == null) {
+            log.w { "Xtream meta short-circuit: no account for id=$id" }
+            _uiState.value = MetaDetailsUiState(errorMessage = getString(Res.string.details_no_addon_meta))
+            activeRequestKey = null
+            return
+        }
+
+        val meta = withContext(Dispatchers.Default) {
+            when (parsed.kind) {
+                XtreamKind.SERIES -> buildXtreamSeriesMeta(id, parsed.accountId, account, parsed.id.toIntOrNull())
+                else -> buildXtreamVodMeta(id, parsed.accountId, account, parsed.id.toIntOrNull())
+            }
+        }
+        if (meta == null) {
+            _uiState.value = MetaDetailsUiState(errorMessage = getString(Res.string.details_no_addon_meta))
+            activeRequestKey = null
+            return
+        }
+
+        val fingerprint = buildMetaScreenSettingsFingerprint(MdbListSettingsRepository.snapshot())
+        cachedMetaByRequestKey[requestKey] = CachedMetaEntry(
+            baseMeta = meta,
+            metaScreenMeta = meta,
+            metaScreenSettingsFingerprint = fingerprint,
+        )
+        _uiState.value = MetaDetailsUiState(meta = meta.withUnreleasedFilter())
+        activeRequestKey = requestKey
+    }
+
+    private suspend fun buildXtreamVodMeta(
+        id: String,
+        accountId: String,
+        account: com.nuvio.app.features.iptv.XtreamAccount,
+        streamId: Int?,
+    ): MetaDetails? {
+        if (streamId == null) return null
+        val registered = XtreamItemRegistry.get(id)
+        val detail = XtreamClient.vodInfo(account, streamId).getOrNull()
+        val name = detail?.name ?: registered?.name ?: "Movie"
+        val poster = registered?.poster
+        val streamUrl = registered?.streamUrl
+            ?: XtreamClient.movieStreamUrl(account, streamId, detail?.containerExtension ?: "mp4")
+        XtreamItemRegistry.register(XtreamResolvedItem(id, accountId, XtreamKind.VOD, name, streamUrl, poster))
+
+        var meta = MetaDetails(
+            id = id,
+            type = "movie",
+            name = name,
+            poster = poster,
+            description = detail?.plot,
+            genres = detail?.genres ?: emptyList(),
+            imdbRating = detail?.rating,
+            releaseInfo = detail?.releaseDate?.take(4)?.ifBlank { null },
+        )
+        detail?.tmdbId?.let { meta = enrichXtreamMeta(meta, it) }
+        return meta
+    }
+
+    private suspend fun buildXtreamSeriesMeta(
+        id: String,
+        accountId: String,
+        account: com.nuvio.app.features.iptv.XtreamAccount,
+        seriesId: Int?,
+    ): MetaDetails? {
+        if (seriesId == null) return null
+        val registered = XtreamItemRegistry.get(id)
+        val detail = XtreamClient.seriesInfo(account, seriesId).getOrNull()
+        val videos = detail?.episodes.orEmpty().map { ep ->
+            val episodeContentId = XtreamItemRegistry.episodeId(accountId, ep.episodeId)
+            val episodeUrl = XtreamClient.episodeStreamUrl(account, ep.episodeId, ep.containerExtension ?: "mp4")
+            XtreamItemRegistry.register(
+                XtreamResolvedItem(episodeContentId, accountId, XtreamKind.EPISODE, ep.title, episodeUrl)
+            )
+            MetaVideo(
+                id = episodeContentId,
+                title = ep.title,
+                season = ep.season,
+                episode = ep.episodeNum,
+                overview = ep.plot,
+                thumbnail = ep.still,
+                streams = listOf(
+                    StreamItem(name = "Direct", title = ep.title, url = episodeUrl, addonName = account.name, addonId = "xtream")
+                ),
+            )
+        }
+        val name = detail?.name ?: registered?.name ?: "Series"
+        var meta = MetaDetails(
+            id = id,
+            type = "series",
+            name = name,
+            poster = registered?.poster ?: detail?.poster,
+            description = detail?.plot,
+            genres = detail?.genres ?: emptyList(),
+            imdbRating = detail?.rating,
+            videos = videos,
+        )
+        detail?.tmdbId?.let { meta = enrichXtreamMeta(meta, it) }
+        return meta
+    }
+
+    private suspend fun enrichXtreamMeta(meta: MetaDetails, tmdbId: Int): MetaDetails {
+        val settings = TmdbSettingsRepository.snapshot()
+        if (!settings.enabled || !settings.hasApiKey) return meta
+        return runCatching { TmdbMetadataService.enrichMeta(meta, "tmdb:$tmdbId", settings) }
+            .onFailure { log.w { "Xtream TMDB enrichment failed for tmdb:$tmdbId: ${it.message}" } }
+            .getOrDefault(meta)
     }
 }
