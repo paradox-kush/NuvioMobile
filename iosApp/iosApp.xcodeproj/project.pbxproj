@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0A1B2C3D4E5F60718293A4BD /* DownloadsWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F60718293A4B5 /* DownloadsWidgetExtension.appex */; };
 		7397CF462F80FE3A00AC0F84 /* MPVKit in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* MPVKit */; };
+		7397CF472F80FE3A00AC0F85 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = C0C1C2C3C4C5C6C7C8C9CACB /* PostHog */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -94,6 +95,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7397CF462F80FE3A00AC0F84 /* MPVKit in Frameworks */,
+				7397CF472F80FE3A00AC0F85 /* PostHog in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -165,6 +167,7 @@
 			name = iosApp;
 			packageProductDependencies = (
 				A1B2C3D4E5F6A7B8C9D0E1F2 /* MPVKit */,
+				C0C1C2C3C4C5C6C7C8C9CACB /* PostHog */,
 			);
 			productName = iosApp;
 			productReference = 07921B4E8F8546BEE682C2FE /* Nuvio.app */;
@@ -199,6 +202,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				F1E2D3C4B5A6F7E8D9C0B1A2 /* XCLocalSwiftPackageReference "../MPVKit" */,
+				B0B1B2B3B4B5B6B7B8B9BABB /* XCRemoteSwiftPackageReference "posthog-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AD93033A33973C81BB77B73A /* Products */;
@@ -546,11 +550,27 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		B0B1B2B3B4B5B6B7B8B9BABB /* XCRemoteSwiftPackageReference "posthog-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/PostHog/posthog-ios.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.63.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* MPVKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = F1E2D3C4B5A6F7E8D9C0B1A2 /* XCLocalSwiftPackageReference "../MPVKit" */;
 			productName = MPVKit;
+		};
+		C0C1C2C3C4C5C6C7C8C9CACB /* PostHog */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B0B1B2B3B4B5B6B7B8B9BABB /* XCRemoteSwiftPackageReference "posthog-ios" */;
+			productName = PostHog;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

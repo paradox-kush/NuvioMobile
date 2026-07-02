@@ -26,6 +26,7 @@ ktor = "3.4.1"
 material3 = "1.11.0-alpha07"
 androidx-media3 = "1.8.0"
 mpv-android-lib = "0.1.12"
+posthog = "3.52.0"
 supabase = "3.4.1"
 quickjsKt = "1.0.5"
 ksoup = "0.2.6"
@@ -49,6 +50,7 @@ compose-uiTooling = { module = "org.jetbrains.compose.ui:ui-tooling", version.re
 androidx-lifecycle-viewmodelCompose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
 androidx-lifecycle-runtimeCompose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "androidx-work" }
+posthog-android = { module = "com.posthog:posthog-android", version.ref = "posthog" }
 compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "composeMultiplatform" }
 compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "composeMultiplatform" }
 compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "material3" }

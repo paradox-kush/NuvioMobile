@@ -4,3 +4,8 @@ TEAM_ID=
 
 PRODUCT_NAME=Nuvio
 PRODUCT_BUNDLE_IDENTIFIER=com.nuvio.app.Nuvio$(TEAM_ID)
+
+// ComposeApp's androidx.sqlite cinterop needs the system sqlite3 at link time.
+// Apple's libsqlite3 omits sqlite3_load_extension; resolve it dynamically (never
+// called unless the loadExtension API is used, which we don't).
+OTHER_LDFLAGS=$(inherited) -lsqlite3 -Wl,-U,_sqlite3_load_extension
