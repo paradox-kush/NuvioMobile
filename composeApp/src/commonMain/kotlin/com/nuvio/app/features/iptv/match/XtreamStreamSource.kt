@@ -34,9 +34,11 @@ internal object XtreamStreamSource {
 
         return when (kind) {
             MatchKind.MOVIE -> {
-                // id-tagged catalogs often carry several editions (4K/HD/language) of the same
-                // film — surface them all as separate streams
-                val editions = XtreamMatchIndex.byTmdb(acc.id, kind, tmdbId).ifEmpty { listOf(match.item) }
+                // catalogs carry several editions (4K/HD/language) of the same film —
+                // surface them all: by shared tmdb id where the panel provides ids, else
+                // by shared normalized name (year-guarded; the verified match stays first)
+                val editions = XtreamMatchIndex.byTmdb(acc.id, kind, tmdbId)
+                    .ifEmpty { sameNameEditions(acc.id, kind, match.item, titles.year) }
                 editions.map { item ->
                     StreamItem(
                         // the panel's own catalog name — carries the useful bits (4K/NF/language)
@@ -51,17 +53,38 @@ internal object XtreamStreamSource {
             MatchKind.SERIES -> {
                 val s = season ?: return emptyList()
                 val e = episode ?: return emptyList()
-                val detail = XtreamClient.seriesInfo(acc, match.item.sid).getOrNull() ?: return emptyList()
-                detail.episodes.filter { it.season == s && it.episodeNum == e }.map { ep ->
-                    StreamItem(
-                        name = "S${s}E${e} · ${ep.title}",
-                        title = detail.name ?: match.item.name,
-                        url = XtreamClient.episodeStreamUrl(acc, ep.episodeId, ep.containerExtension ?: "mp4"),
-                        addonName = acc.name,
-                        addonId = groupId(acc),
-                    )
+                val editions = XtreamMatchIndex.byTmdb(acc.id, kind, tmdbId)
+                    .ifEmpty { sameNameEditions(acc.id, kind, match.item, titles.year) }
+                    .take(MAX_SERIES_EDITIONS) // one get_series_info per edition — bound it
+                editions.flatMap { ed ->
+                    val detail = XtreamClient.seriesInfo(acc, ed.sid).getOrNull() ?: return@flatMap emptyList<StreamItem>()
+                    detail.episodes.filter { it.season == s && it.episodeNum == e }.map { ep ->
+                        StreamItem(
+                            name = "S${s}E${e} · ${ep.title}",
+                            // the edition's catalog name so language variants are tellable apart
+                            title = ed.name,
+                            url = XtreamClient.episodeStreamUrl(acc, ep.episodeId, ep.containerExtension ?: "mp4"),
+                            addonName = acc.name,
+                            addonId = groupId(acc),
+                        )
+                    }
                 }
             }
         }
     }
+
+    /**
+     * Editions of the same title on panels that ship no tmdb ids: items sharing the matched
+     * item's normalized name key, year-compatible with the target. The verified match leads.
+     */
+    private suspend fun sameNameEditions(provider: String, kind: MatchKind, matched: IndexedItem, targetYear: Int?): List<IndexedItem> {
+        val key = TitleNormalizer.normKey(matched.name)
+        if (key.isEmpty()) return listOf(matched)
+        val siblings = XtreamMatchIndex.probe(provider, kind, key).filter {
+            it.year == null || targetYear == null || (if (it.year > targetYear) it.year - targetYear else targetYear - it.year) <= 1
+        }
+        return (listOf(matched) + siblings).distinctBy { it.sid }
+    }
+
+    private const val MAX_SERIES_EDITIONS = 5
 }
