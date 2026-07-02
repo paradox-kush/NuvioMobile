@@ -3,35 +3,35 @@ package com.nuvio.app.features.iptv
 import com.nuvio.app.features.catalog.CatalogTarget
 import com.nuvio.app.features.home.HomeCatalogSection
 import com.nuvio.app.features.home.MetaPreview
+import com.nuvio.app.features.iptv.match.MatchKind
+import com.nuvio.app.features.iptv.match.XtreamMatchIndex
+import com.nuvio.app.features.iptv.match.XtreamTmdbResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Xtream has no search API, so we pull each enabled account's full live/series/VOD lists once,
- * cache them, and substring-filter in memory. Live + series are fetched on the first search
- * (smaller); the VOD list (often 50k+) loads in the BACKGROUND so channels/series results show
- * immediately and movies fill in on a later keystroke — matching NuvioTV's index.
- *
- * ponytail: whole lists cached in RAM; fine for a handful of accounts. Cap/stream if it grows.
+ * Xtream has no search API. Movies + series are served from the persistent SQLite match
+ * index (the same one TMDB->stream matching builds: full catalog, 24h TTL, survives
+ * restarts) — no re-downloading 50k+ item lists into RAM per session. Live channels
+ * aren't in that index, so they keep the fetch-once-per-session RAM path.
  */
 object XtreamSearchIndex {
-    private data class AccountLists(
-        val channels: List<XtreamChannel> = emptyList(),
-        val series: List<XtreamSeriesItem> = emptyList(),
-        val movies: List<XtreamMovie> = emptyList(),
-    )
 
-    private val cache = mutableMapOf<String, AccountLists>()
-    private val coreJobs = mutableMapOf<String, Deferred<*>>()
+    private val channelCache = mutableMapOf<String, List<XtreamChannel>>()
+    private val channelJobs = mutableMapOf<String, Deferred<List<XtreamChannel>>>()
     private val mutex = Mutex()
     private val bgScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private const val PER_TYPE_CAP = 30
+
+    // a cold index build (huge catalogs) shouldn't stall a keystroke forever; an already
+    // built index responds instantly, a building one fills in on a later keystroke
+    private const val INDEX_WAIT_MS = 12_000L
 
     suspend fun search(query: String): List<HomeCatalogSection> {
         val q = query.trim()
@@ -44,15 +44,41 @@ object XtreamSearchIndex {
         val series = mutableListOf<MetaPreview>()
         val movies = mutableListOf<MetaPreview>()
         for (account in accounts) {
-            val lists = ensureLists(account)
-            lists.channels.asSequence().filter { it.name.contains(q, ignoreCase = true) }.take(PER_TYPE_CAP).forEach {
-                XtreamItemRegistry.registerChannel(account.id, it); channels += it.toMetaPreview(account.id)
+            ensureChannels(account).asSequence()
+                .filter { it.name.contains(q, ignoreCase = true) }.take(PER_TYPE_CAP).forEach {
+                    XtreamItemRegistry.registerChannel(account.id, it); channels += it.toMetaPreview(account.id)
+                }
+
+            withTimeoutOrNull(INDEX_WAIT_MS) { XtreamTmdbResolver.ensureIndexed(account, MatchKind.MOVIE) }
+            XtreamMatchIndex.searchByName(account.id, MatchKind.MOVIE, q, PER_TYPE_CAP).forEach { item ->
+                val movie = XtreamMovie(
+                    streamId = item.sid,
+                    name = item.name,
+                    poster = item.poster,
+                    categoryId = null,
+                    rating = null,
+                    streamUrl = XtreamClient.movieStreamUrl(account, item.sid, item.ext ?: "mp4"),
+                    tmdb = item.tmdb,
+                    containerExtension = item.ext,
+                )
+                XtreamItemRegistry.registerMovie(account.id, movie)
+                movies += movie.toMetaPreview(account.id)
             }
-            lists.series.asSequence().filter { it.name.contains(q, ignoreCase = true) }.take(PER_TYPE_CAP).forEach {
-                XtreamItemRegistry.registerSeries(account.id, it); series += it.toMetaPreview(account.id)
-            }
-            lists.movies.asSequence().filter { it.name.contains(q, ignoreCase = true) }.take(PER_TYPE_CAP).forEach {
-                XtreamItemRegistry.registerMovie(account.id, it); movies += it.toMetaPreview(account.id)
+
+            withTimeoutOrNull(INDEX_WAIT_MS) { XtreamTmdbResolver.ensureIndexed(account, MatchKind.SERIES) }
+            XtreamMatchIndex.searchByName(account.id, MatchKind.SERIES, q, PER_TYPE_CAP).forEach { item ->
+                val seriesItem = XtreamSeriesItem(
+                    seriesId = item.sid,
+                    name = item.name,
+                    poster = item.poster,
+                    categoryId = null,
+                    plot = null,
+                    rating = null,
+                    tmdb = item.tmdb,
+                    year = item.year,
+                )
+                XtreamItemRegistry.registerSeries(account.id, seriesItem)
+                series += seriesItem.toMetaPreview(account.id)
             }
         }
         return listOfNotNull(
@@ -77,40 +103,25 @@ object XtreamSearchIndex {
     }
 
     /**
-     * Fetch channels + series (in parallel) once per account, in [bgScope] so a keystroke that
-     * cancels the search job can't abort the fetch — otherwise fast typing starves the huge live/
-     * series lists while VOD (already backgrounded) fills in, which looks like "only movies work".
+     * Live channels once per account per session, in [bgScope] so a keystroke that cancels
+     * the search job can't abort the fetch.
      */
-    private suspend fun ensureLists(account: XtreamAccount): AccountLists {
+    private suspend fun ensureChannels(account: XtreamAccount): List<XtreamChannel> {
         val job = mutex.withLock {
-            coreJobs.getOrPut(account.id) {
+            channelJobs.getOrPut(account.id) {
                 bgScope.async {
-                    val channelsD = async { XtreamClient.liveChannels(account) }
-                    val seriesD = async { XtreamClient.series(account) }
-                    val channelsResult = channelsD.await()
-                    val seriesResult = seriesD.await()
-                    mutex.withLock {
-                        cache[account.id] = AccountLists(
-                            channels = channelsResult.getOrDefault(emptyList()),
-                            series = seriesResult.getOrDefault(emptyList()),
-                            movies = cache[account.id]?.movies ?: emptyList(),
-                        )
-                    }
-                    bgScope.launch {
-                        val movies = XtreamClient.vodMovies(account).getOrDefault(emptyList())
-                        mutex.withLock {
-                            cache[account.id] = (cache[account.id] ?: AccountLists()).copy(movies = movies)
-                        }
-                    }
+                    val channels = XtreamClient.liveChannels(account).getOrDefault(emptyList())
+                    mutex.withLock { channelCache[account.id] = channels }
+                    channels
                 }
             }
         }
         job.await()
-        return cache[account.id] ?: AccountLists()
+        return mutex.withLock { channelCache[account.id] } ?: emptyList()
     }
 
     fun resetForProfile() {
-        cache.clear()
-        coreJobs.clear()
+        channelCache.clear()
+        channelJobs.clear()
     }
 }

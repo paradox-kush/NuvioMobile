@@ -1,6 +1,9 @@
 package com.nuvio.app.features.iptv
 
+import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.profiles.ProfileRepository
+import com.nuvio.app.features.watched.WatchedRepository
+import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -82,6 +85,79 @@ object XtreamRepository {
                     onResult(false)
                 }
         }
+    }
+
+    /** Re-verify + replace an existing account from a pasted portal/M3U URL (playlist edit). */
+    fun editFromUrl(oldId: String, input: String, onResult: (Boolean) -> Unit) {
+        val oldName = _uiState.value.accounts.firstOrNull { it.id == oldId }?.name
+        verifyAndReplace(oldId, parseXtreamAccount(input, oldName), "Couldn't read a username & password from that URL", onResult)
+    }
+
+    /** Re-verify + replace an existing account from manually-edited fields (playlist edit). */
+    fun editManual(oldId: String, serverUrl: String, username: String, password: String, name: String?, onResult: (Boolean) -> Unit) {
+        verifyAndReplace(
+            oldId,
+            xtreamAccountFromFields(serverUrl, username, password, name),
+            "Enter a server URL, username and password",
+            onResult
+        )
+    }
+
+    /**
+     * Verifies the edited credentials live, then swaps the account in place (keeping its
+     * position + enabled flag) and re-runs the discovery cycle. Saved items (library,
+     * watch progress, watched marks, recent channels) follow the account when it's still
+     * the same playlist; a completely different playlist purges them instead.
+     */
+    private fun verifyAndReplace(oldId: String, candidate: XtreamAccount?, parseError: String, onResult: (Boolean) -> Unit) {
+        val old = _uiState.value.accounts.firstOrNull { it.id == oldId }
+        if (old == null || candidate == null) {
+            _uiState.update { it.copy(error = if (old == null) "Account no longer exists" else parseError) }
+            onResult(false)
+            return
+        }
+        val account = candidate.copy(enabled = old.enabled)
+        scope.launch {
+            _uiState.update { it.copy(isValidating = true, error = null) }
+            XtreamClient.verify(account)
+                .onSuccess {
+                    _uiState.update { st ->
+                        st.copy(
+                            // Replace in place; drop any pre-existing duplicate of the new identity.
+                            accounts = st.accounts
+                                .filterNot { it.id == account.id && it.id != oldId }
+                                .map { if (it.id == oldId) account else it },
+                            isValidating = false,
+                        )
+                    }
+                    if (account.id != oldId) migrateSavedData(old, account)
+                    // Re-run the discovery cycle: drop caches/URLs built with the old server/creds.
+                    XtreamItemRegistry.resetForProfile()
+                    XtreamHubRepository.resetForProfile()
+                    XtreamSearchIndex.resetForProfile()
+                    persist()
+                    onResult(true)
+                }
+                .onFailure { e ->
+                    _uiState.update { it.copy(isValidating = false, error = e.message ?: "Could not reach the panel") }
+                    onResult(false)
+                }
+        }
+    }
+
+    /**
+     * Same playlist (same server or same username, e.g. a panel that moved domains or
+     * rotated creds) -> rewrite saved xtream content ids to the new account id. A completely
+     * different playlist -> the old ids point at content that no longer exists, so drop them.
+     */
+    private fun migrateSavedData(old: XtreamAccount, new: XtreamAccount) {
+        val samePlaylist = old.username == new.username || old.baseUrl == new.baseUrl
+        val oldPrefix = XtreamItemRegistry.accountPrefix(old.id)
+        val newPrefix = if (samePlaylist) XtreamItemRegistry.accountPrefix(new.id) else null
+        LibraryRepository.migrateIdPrefix(oldPrefix, newPrefix)
+        WatchProgressRepository.migrateIdPrefix(oldPrefix, newPrefix)
+        WatchedRepository.migrateIdPrefix(oldPrefix, newPrefix)
+        XtreamLiveRecents.migrateIdPrefix(oldPrefix, newPrefix)
     }
 
     fun setEnabled(id: String, enabled: Boolean) {

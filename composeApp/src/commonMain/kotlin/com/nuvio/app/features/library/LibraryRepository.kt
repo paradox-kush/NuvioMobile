@@ -288,6 +288,26 @@ object LibraryRepository {
         }
     }
 
+    /**
+     * IPTV playlist edit: rewrites every saved item under an old `xtream:{accountId}:` id
+     * prefix to the new one, or drops them when newPrefix is null (different playlist).
+     */
+    fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) {
+        ensureLoaded()
+        val affected = itemsById.filterValues { it.id.startsWith(oldPrefix) }
+        if (affected.isEmpty()) return
+        affected.keys.forEach { itemsById.remove(it) }
+        if (newPrefix != null) {
+            affected.values.forEach { item ->
+                val moved = item.copy(id = newPrefix + item.id.removePrefix(oldPrefix))
+                itemsById[libraryItemKey(moved.id, moved.type)] = moved
+            }
+        }
+        publish()
+        persist()
+        pushToServer()
+    }
+
     fun isSaved(id: String, type: String? = null): Boolean {
         ensureLoaded()
 

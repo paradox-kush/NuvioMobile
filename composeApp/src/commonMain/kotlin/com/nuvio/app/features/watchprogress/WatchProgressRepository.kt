@@ -844,6 +844,33 @@ object WatchProgressRepository {
         pushDeleteToServer(entriesToRemove)
     }
 
+    /**
+     * IPTV playlist edit: rewrites every entry under an old `xtream:{accountId}:` id prefix
+     * to the new one (same playlist, new server/creds), or drops them when newPrefix is null
+     * (different playlist). Remote copies of the old ids are deleted so delta pulls don't
+     * resurrect ghost Continue Watching rows.
+     */
+    fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) {
+        ensureLoaded()
+        val affected = localEntriesSnapshot().filter {
+            it.videoId.startsWith(oldPrefix) || it.parentMetaId.startsWith(oldPrefix)
+        }
+        if (affected.isEmpty()) return
+        affected.forEach { removeLocalEntry(it.videoId) }
+        val moved = if (newPrefix == null) emptyList() else affected.map { entry ->
+            entry.copy(
+                videoId = entry.videoId.rewriteIdPrefix(oldPrefix, newPrefix),
+                parentMetaId = entry.parentMetaId.rewriteIdPrefix(oldPrefix, newPrefix),
+                lastSourceUrl = null, // built against the old server; the xtream short-circuit rebuilds it
+            )
+        }
+        moved.forEach { upsertLocalEntry(it) }
+        publish()
+        persist()
+        pushDeleteToServer(affected)
+        moved.forEach { pushScrobbleToServer(it, currentProfileId) }
+    }
+
     fun progressForVideo(videoId: String): WatchProgressEntry? {
         ensureLoaded()
         return if (shouldUseTraktProgress()) {
@@ -1158,4 +1185,7 @@ object WatchProgressRepository {
                 resource.types.contains(type) &&
                 (resource.idPrefixes.isEmpty() || resource.idPrefixes.any { prefix -> id.startsWith(prefix) })
         }
+
+    private fun String.rewriteIdPrefix(oldPrefix: String, newPrefix: String): String =
+        if (startsWith(oldPrefix)) newPrefix + removePrefix(oldPrefix) else this
 }

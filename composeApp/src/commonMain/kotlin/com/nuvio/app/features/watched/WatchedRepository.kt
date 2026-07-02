@@ -353,6 +353,35 @@ object WatchedRepository {
         }
     }
 
+    /**
+     * IPTV playlist edit: rewrites every watched mark under an old `xtream:{accountId}:` id
+     * prefix to the new one, or drops them when newPrefix is null (different playlist).
+     * Old remote marks are deleted so delta pulls don't resurrect them.
+     */
+    fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) {
+        ensureLoaded()
+        val affected = itemsByKey.filterValues { it.id.startsWith(oldPrefix) }
+        val hadSeriesKeys = _fullyWatchedSeriesKeys.value.any { it.contains(oldPrefix) }
+        if (affected.isEmpty() && !hadSeriesKeys) return
+        affected.keys.forEach { itemsByKey.remove(it) }
+        val moved = if (newPrefix == null) emptyList() else affected.values.map { item ->
+            item.copy(id = newPrefix + item.id.removePrefix(oldPrefix))
+        }
+        moved.forEach { itemsByKey[watchedItemKey(it.type, it.id, it.season, it.episode)] = it }
+        // Fully-watched series keys embed the content id — rewrite/drop by substring.
+        _fullyWatchedSeriesKeys.value = _fullyWatchedSeriesKeys.value.mapNotNull { key ->
+            when {
+                !key.contains(oldPrefix) -> key
+                newPrefix == null -> null
+                else -> key.replace(oldPrefix, newPrefix)
+            }
+        }.toSet()
+        publish()
+        persist()
+        pushDeleteToServer(affected.values.toList())
+        if (moved.isNotEmpty()) pushMarksToServer(moved, WatchedTraktHistorySync.Skip)
+    }
+
     fun markWatched(item: WatchedItem) {
         markWatched(listOf(item))
     }

@@ -13,7 +13,14 @@ private inline fun <R> SQLiteStatement.use(block: (SQLiteStatement) -> R): R =
 internal enum class MatchKind(val slug: String) { MOVIE("movie"), SERIES("series") }
 
 /** One catalog entry as stored in the index. [ext] = container extension (movies only). */
-internal data class IndexedItem(val sid: Int, val name: String, val year: Int?, val tmdb: Int?, val ext: String?)
+internal data class IndexedItem(
+    val sid: Int,
+    val name: String,
+    val year: Int?,
+    val tmdb: Int?,
+    val ext: String?,
+    val poster: String? = null,
+)
 
 /** A confirmed (or confirmed-absent when [sid] is null) TMDB->stream mapping. */
 internal data class CachedMapping(val sid: Int?, val matchedName: String?, val updatedAtMs: Long)
@@ -29,7 +36,15 @@ internal object XtreamMatchIndex {
     private var conn: SQLiteConnection? = null
 
     private fun connection(): SQLiteConnection = conn ?: MatchDbDriver.openConnection().also {
-        it.execSQL("CREATE TABLE IF NOT EXISTS items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
+        // schema v2 adds items.poster (search cards). index tables are rebuildable caches,
+        // mappings re-pull from Supabase — so migration is drop+recreate.
+        val version = it.prepare("PRAGMA user_version").use { st -> if (st.step()) st.getLong(0) else 0L }
+        if (version < 2) {
+            it.execSQL("DROP TABLE IF EXISTS items"); it.execSQL("DROP TABLE IF EXISTS keys")
+            it.execSQL("DROP TABLE IF EXISTS idx_meta"); it.execSQL("DROP TABLE IF EXISTS tmdb_map")
+            it.execSQL("PRAGMA user_version = 2")
+        }
+        it.execSQL("CREATE TABLE IF NOT EXISTS items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, poster TEXT, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
         it.execSQL("CREATE INDEX IF NOT EXISTS items_tmdb ON items(provider, kind, tmdb)")
         it.execSQL("CREATE TABLE IF NOT EXISTS keys(provider TEXT NOT NULL, kind TEXT NOT NULL, k TEXT NOT NULL, sid INTEGER NOT NULL, PRIMARY KEY(provider, kind, k, sid)) WITHOUT ROWID")
         it.execSQL("CREATE TABLE IF NOT EXISTS idx_meta(provider TEXT NOT NULL, kind TEXT NOT NULL, built_at INTEGER NOT NULL, item_count INTEGER NOT NULL, PRIMARY KEY(provider, kind)) WITHOUT ROWID")
@@ -75,7 +90,7 @@ internal object XtreamMatchIndex {
                 val c = connection()
                 c.execSQL("BEGIN IMMEDIATE")
                 try {
-                    c.prepare("INSERT OR REPLACE INTO items(provider, kind, sid, name, year, tmdb, ext) VALUES(?,?,?,?,?,?,?)").use { st ->
+                    c.prepare("INSERT OR REPLACE INTO items(provider, kind, sid, name, year, tmdb, ext, poster) VALUES(?,?,?,?,?,?,?,?)").use { st ->
                         for (it in chunk) {
                             st.reset()
                             st.bindText(1, provider); st.bindText(2, kind.slug); st.bindLong(3, it.sid.toLong())
@@ -83,6 +98,7 @@ internal object XtreamMatchIndex {
                             if (it.year != null) st.bindLong(5, it.year.toLong()) else st.bindNull(5)
                             if (it.tmdb != null) st.bindLong(6, it.tmdb.toLong()) else st.bindNull(6)
                             if (it.ext != null) st.bindText(7, it.ext) else st.bindNull(7)
+                            if (it.poster != null) st.bindText(8, it.poster) else st.bindNull(8)
                             st.step()
                         }
                     }
@@ -110,10 +126,20 @@ internal object XtreamMatchIndex {
         }
     }
 
+    /** Substring name search over the indexed catalog — backs the IPTV rows in Search. */
+    suspend fun searchByName(provider: String, kind: MatchKind, query: String, limit: Int): List<IndexedItem> = mutex.withLock {
+        connection().prepare(
+            "SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? AND name LIKE '%' || ? || '%' LIMIT ?"
+        ).use { st ->
+            st.bindText(1, provider); st.bindText(2, kind.slug); st.bindText(3, query); st.bindLong(4, limit.toLong())
+            readItems(st)
+        }
+    }
+
     /** All items indexed under a normalized key. */
     suspend fun probe(provider: String, kind: MatchKind, key: String): List<IndexedItem> = mutex.withLock {
         connection().prepare(
-            "SELECT i.sid, i.name, i.year, i.tmdb, i.ext FROM keys x JOIN items i ON i.provider = x.provider AND i.kind = x.kind AND i.sid = x.sid WHERE x.provider = ? AND x.kind = ? AND x.k = ?"
+            "SELECT i.sid, i.name, i.year, i.tmdb, i.ext, i.poster FROM keys x JOIN items i ON i.provider = x.provider AND i.kind = x.kind AND i.sid = x.sid WHERE x.provider = ? AND x.kind = ? AND x.k = ?"
         ).use { st ->
             st.bindText(1, provider); st.bindText(2, kind.slug); st.bindText(3, key)
             readItems(st)
@@ -122,14 +148,14 @@ internal object XtreamMatchIndex {
 
     /** Tier-1: items whose bulk-list tmdb id already matches. */
     suspend fun byTmdb(provider: String, kind: MatchKind, tmdb: Int): List<IndexedItem> = mutex.withLock {
-        connection().prepare("SELECT sid, name, year, tmdb, ext FROM items WHERE provider = ? AND kind = ? AND tmdb = ?").use { st ->
+        connection().prepare("SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? AND tmdb = ?").use { st ->
             st.bindText(1, provider); st.bindText(2, kind.slug); st.bindLong(3, tmdb.toLong())
             readItems(st)
         }
     }
 
     suspend fun item(provider: String, kind: MatchKind, sid: Int): IndexedItem? = mutex.withLock {
-        connection().prepare("SELECT sid, name, year, tmdb, ext FROM items WHERE provider = ? AND kind = ? AND sid = ?").use { st ->
+        connection().prepare("SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? AND sid = ?").use { st ->
             st.bindText(1, provider); st.bindText(2, kind.slug); st.bindLong(3, sid.toLong())
             readItems(st).firstOrNull()
         }
@@ -145,6 +171,7 @@ internal object XtreamMatchIndex {
                     year = if (st.isNull(2)) null else st.getLong(2).toInt(),
                     tmdb = if (st.isNull(3)) null else st.getLong(3).toInt(),
                     ext = if (st.isNull(4)) null else st.getText(4),
+                    poster = if (st.isNull(5)) null else st.getText(5),
                 )
             )
         }

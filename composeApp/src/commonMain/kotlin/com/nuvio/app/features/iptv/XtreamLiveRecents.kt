@@ -45,6 +45,24 @@ object XtreamLiveRecents {
         XtreamAccountStorage.saveRecentsJson(currentProfileId, json.encodeToString(updated))
     }
 
+    /**
+     * IPTV playlist edit: rewrites recent channels under an old `xtream:{accountId}:` id
+     * prefix to the new one, or drops them when newPrefix is null (different playlist).
+     */
+    fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) {
+        ensureLoaded()
+        if (_recents.value.none { it.contentId.startsWith(oldPrefix) }) return
+        val updated = _recents.value.mapNotNull { recent ->
+            when {
+                !recent.contentId.startsWith(oldPrefix) -> recent
+                newPrefix == null -> null
+                else -> recent.copy(contentId = newPrefix + recent.contentId.removePrefix(oldPrefix))
+            }
+        }
+        _recents.value = updated
+        XtreamAccountStorage.saveRecentsJson(currentProfileId, json.encodeToString(updated))
+    }
+
     /** Reload this profile's recents on a profile switch (the Home Live TV row observes them live). */
     fun onProfileChanged(profileId: Int) {
         loaded = true

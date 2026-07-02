@@ -486,6 +486,15 @@ fun App() {
         var isNewProfile by remember { mutableStateOf(false) }
         var autoSkipProfileSelection by rememberSaveable { mutableStateOf(false) }
 
+        // Settings "Sign In" button (signed-out users stay in the app via cached profiles,
+        // so nothing else ever routes back to the auth screen).
+        val signInRequests by AuthRepository.signInRequests.collectAsStateWithLifecycle()
+        LaunchedEffect(signInRequests) {
+            if (signInRequests > 0 && authState !is AuthState.Authenticated) {
+                gateScreen = AppGateScreen.Auth.name
+            }
+        }
+
         fun rememberedStartupProfile(profiles: List<NuvioProfile>): NuvioProfile? {
             val currentProfileState = ProfileRepository.state.value
             if (

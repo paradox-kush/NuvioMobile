@@ -45,8 +45,10 @@ import nuvio.composeapp.generated.resources.settings_account_delete_account
 import nuvio.composeapp.generated.resources.settings_account_delete_account_description
 import nuvio.composeapp.generated.resources.settings_account_delete_confirm_message
 import nuvio.composeapp.generated.resources.settings_account_delete_confirm_title
+import nuvio.composeapp.generated.resources.settings_account_checking
 import nuvio.composeapp.generated.resources.settings_account_email
 import nuvio.composeapp.generated.resources.settings_account_not_signed_in
+import nuvio.composeapp.generated.resources.settings_account_sign_in
 import nuvio.composeapp.generated.resources.settings_account_sign_out
 import nuvio.composeapp.generated.resources.settings_account_sign_out_confirm_message
 import nuvio.composeapp.generated.resources.settings_account_sign_out_confirm_title
@@ -108,6 +110,13 @@ private fun AccountSettingsBody(
                         )
                     }
                 }
+                is AuthState.Loading -> {
+                    Text(
+                        text = stringResource(Res.string.settings_account_checking),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 else -> {
                     Text(
                         text = stringResource(Res.string.settings_account_not_signed_in),
@@ -136,6 +145,13 @@ private fun AccountSettingsBody(
             NuvioPrimaryButton(
                 text = stringResource(Res.string.settings_account_sign_out),
                 onClick = { showSignOutConfirm = true },
+            )
+        }
+
+        if (authState is AuthState.Unauthenticated) {
+            NuvioPrimaryButton(
+                text = stringResource(Res.string.settings_account_sign_in),
+                onClick = { AuthRepository.requestSignIn() },
             )
         }
 

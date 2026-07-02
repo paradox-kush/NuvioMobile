@@ -32,8 +32,16 @@ object AuthRepository {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    private val _signInRequests = MutableStateFlow(0)
+    val signInRequests: StateFlow<Int> = _signInRequests.asStateFlow()
+
     private var initialized = false
     private var validatedRemoteUserId: String? = null
+
+    /** Asks the app shell to show the sign-in screen (used from Settings while signed out). */
+    fun requestSignIn() {
+        _signInRequests.value += 1
+    }
 
     fun initialize() {
         if (initialized) return
@@ -76,7 +84,20 @@ object AuthRepository {
                             }
                         }
                         is SessionStatus.RefreshFailure -> {
-                            _state.value = AuthState.Unauthenticated
+                            // Offline/flaky token refresh is NOT a sign-out: keep showing the
+                            // persisted session (supabase settles the real state once reachable).
+                            val user = runCatching {
+                                SupabaseProvider.client.auth.sessionManager.loadSession()
+                            }.getOrNull()?.user
+                            _state.value = if (user != null) {
+                                AuthState.Authenticated(
+                                    userId = user.id,
+                                    email = user.email,
+                                    isAnonymous = false,
+                                )
+                            } else {
+                                AuthState.Unauthenticated
+                            }
                         }
                     }
                 }

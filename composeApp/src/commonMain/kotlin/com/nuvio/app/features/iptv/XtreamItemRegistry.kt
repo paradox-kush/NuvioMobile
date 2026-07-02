@@ -24,6 +24,9 @@ object XtreamItemRegistry {
 
     fun buildId(accountId: String, kind: String, id: String): String = "$PREFIX:$accountId:$kind:$id"
 
+    /** Prefix shared by every content id of one account — used for playlist-edit id migration. */
+    fun accountPrefix(accountId: String): String = "$PREFIX:$accountId:"
+
     fun vodId(accountId: String, streamId: Int): String = buildId(accountId, XtreamKind.VOD.slug, streamId.toString())
     fun seriesId(accountId: String, seriesId: Int): String = buildId(accountId, XtreamKind.SERIES.slug, seriesId.toString())
     fun liveId(accountId: String, streamId: Int): String = buildId(accountId, XtreamKind.LIVE.slug, streamId.toString())

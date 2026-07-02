@@ -184,10 +184,10 @@ internal object XtreamTmdbResolver {
                 try {
                     val items = when (kind) {
                         MatchKind.MOVIE -> XtreamClient.vodMovies(acc).getOrThrow().map {
-                            IndexedItem(it.streamId, it.name, TitleNormalizer.yearOf(it.name), it.tmdb, it.containerExtension)
+                            IndexedItem(it.streamId, it.name, TitleNormalizer.yearOf(it.name), it.tmdb, it.containerExtension, it.poster)
                         }
                         MatchKind.SERIES -> XtreamClient.series(acc).getOrThrow().map {
-                            IndexedItem(it.seriesId, it.name, it.year ?: TitleNormalizer.yearOf(it.name), it.tmdb, null)
+                            IndexedItem(it.seriesId, it.name, it.year ?: TitleNormalizer.yearOf(it.name), it.tmdb, null, it.poster)
                         }
                     }
                     XtreamMatchIndex.rebuild(acc.id, kind, items)
