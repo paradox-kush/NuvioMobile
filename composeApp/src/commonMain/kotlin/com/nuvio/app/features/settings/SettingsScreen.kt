@@ -49,6 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.features.iptv.XtreamContentPage
 import com.nuvio.app.features.iptv.XtreamRepository
 import com.nuvio.app.features.iptv.XtreamUiState
+import com.nuvio.app.features.iptv.xtreamCategoryChecklistContent
 import com.nuvio.app.features.iptv.xtreamContentSettingsContent
 import com.nuvio.app.features.iptv.xtreamSettingsContent
 import com.nuvio.app.core.ui.AppTheme
@@ -703,6 +704,21 @@ private fun MobileSettingsScreen(
                     xtreamContentSettingsContent(
                         isTablet = false,
                         state = xtreamState,
+                        onOpenType = { type ->
+                            XtreamContentPage.openChecklist(type)
+                            onPageChange(SettingsPage.IptvCategoryChecklist)
+                        },
+                    )
+                }
+                SettingsPage.IptvCategoryChecklist -> if (
+                    XtreamContentPage.accountId == null || XtreamContentPage.type == null
+                ) {
+                    // Process-death restore: the drilled-into type is a plain var — bounce back.
+                    item { LaunchedEffect(Unit) { onPageChange(SettingsPage.Iptv) } }
+                } else {
+                    xtreamCategoryChecklistContent(
+                        isTablet = false,
+                        state = xtreamState,
                     )
                 }
                 SettingsPage.TraktAuthentication -> traktSettingsContent(
@@ -1123,6 +1139,21 @@ private fun TabletSettingsScreen(
                         item { LaunchedEffect(Unit) { onPageChange(SettingsPage.Iptv) } }
                     } else {
                         xtreamContentSettingsContent(
+                            isTablet = true,
+                            state = xtreamState,
+                            onOpenType = { type ->
+                                XtreamContentPage.openChecklist(type)
+                                onPageChange(SettingsPage.IptvCategoryChecklist)
+                            },
+                        )
+                    }
+                    SettingsPage.IptvCategoryChecklist -> if (
+                        XtreamContentPage.accountId == null || XtreamContentPage.type == null
+                    ) {
+                        // Process-death restore: the drilled-into type is a plain var — bounce back.
+                        item { LaunchedEffect(Unit) { onPageChange(SettingsPage.Iptv) } }
+                    } else {
+                        xtreamCategoryChecklistContent(
                             isTablet = true,
                             state = xtreamState,
                         )
