@@ -86,6 +86,49 @@ object TmdbService {
         return resultId
     }
 
+    /**
+     * Every name TMDB knows for a title (primary + original + alternative_titles +
+     * translations, one details call) plus release year. This is what makes cross-language
+     * IPTV matching work: a panel's "Planeta Tierra II" or "اتاق های پشتی" matches via the
+     * official localized title, not fuzzy string similarity.
+     */
+    suspend fun titleBundle(tmdbId: Int, mediaType: String): TmdbTitleBundle? {
+        val apiKey = currentApiKey() ?: return null
+        val type = normalizeMediaType(mediaType)
+        val cacheKey = "$tmdbId:$type"
+        cacheMutex.withLock { titleBundleCache[cacheKey]?.let { return it } }
+
+        val endpoint = if (type == "tv") "tv/$tmdbId" else "movie/$tmdbId"
+        val d = fetch<TmdbDetailsWithTitles>(
+            endpoint = endpoint,
+            apiKey = apiKey,
+            query = mapOf("append_to_response" to "alternative_titles,translations"),
+        ) ?: return null
+
+        val primary = (d.title ?: d.name)?.trim()?.takeIf(String::isNotBlank)
+        val original = (d.originalTitle ?: d.originalName)?.trim()?.takeIf(String::isNotBlank)
+        val alts = LinkedHashSet<String>()
+        (d.alternativeTitles?.titles.orEmpty() + d.alternativeTitles?.results.orEmpty())
+            .mapNotNullTo(alts) { it.title?.trim()?.takeIf(String::isNotBlank) }
+        d.translations?.translations.orEmpty()
+            .mapNotNullTo(alts) { (it.data?.title ?: it.data?.name)?.trim()?.takeIf(String::isNotBlank) }
+        primary?.let(alts::remove); original?.let(alts::remove)
+
+        val bundle = TmdbTitleBundle(
+            primary = primary,
+            original = original,
+            alternatives = alts.toList(),
+            year = (d.releaseDate ?: d.firstAirDate)?.take(4)?.toIntOrNull(),
+        )
+        cacheMutex.withLock {
+            if (titleBundleCache.size >= 200) titleBundleCache.remove(titleBundleCache.keys.first())
+            titleBundleCache[cacheKey] = bundle
+        }
+        return bundle
+    }
+
+    private val titleBundleCache = linkedMapOf<String, TmdbTitleBundle>()
+
     private suspend inline fun <reified T> fetch(
         endpoint: String,
         apiKey: String,
@@ -130,6 +173,43 @@ internal fun buildTmdbUrl(
         }
     }
 }
+
+data class TmdbTitleBundle(
+    val primary: String?,
+    val original: String?,
+    val alternatives: List<String>,
+    val year: Int?,
+)
+
+@Serializable
+private data class TmdbDetailsWithTitles(
+    val title: String? = null,
+    val name: String? = null,
+    @SerialName("original_title") val originalTitle: String? = null,
+    @SerialName("original_name") val originalName: String? = null,
+    @SerialName("release_date") val releaseDate: String? = null,
+    @SerialName("first_air_date") val firstAirDate: String? = null,
+    @SerialName("alternative_titles") val alternativeTitles: TmdbAltTitles? = null,
+    val translations: TmdbTranslations? = null,
+)
+
+@Serializable
+private data class TmdbAltTitles(
+    val titles: List<TmdbAltTitle> = emptyList(),   // movies
+    val results: List<TmdbAltTitle> = emptyList(),  // tv
+)
+
+@Serializable
+private data class TmdbAltTitle(val title: String? = null)
+
+@Serializable
+private data class TmdbTranslations(val translations: List<TmdbTranslation> = emptyList())
+
+@Serializable
+private data class TmdbTranslation(val data: TmdbTranslationData? = null)
+
+@Serializable
+private data class TmdbTranslationData(val title: String? = null, val name: String? = null)
 
 @Serializable
 private data class TmdbFindResponse(

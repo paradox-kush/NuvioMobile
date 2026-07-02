@@ -328,6 +328,8 @@ kotlin {
         }
         minSdk = libs.versions.android.minSdk.get().toInt()
         androidResources.enable = true
+        // JVM-side run of commonTest (fast local + ubuntu CI; the iOS twin is iosSimulatorArm64Test)
+        withHostTestBuilder {}
 
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
@@ -365,6 +367,8 @@ kotlin {
             baseName = "ComposeApp"
             isStatic = true
             freeCompilerArgs += listOf("-Xbinary=bundleId=$iosFrameworkBundleId")
+            // NativeSQLiteDriver links against the OS sqlite3 (match index storage)
+            linkerOpts("-lsqlite3")
         }
     }
     
@@ -438,6 +442,10 @@ kotlin {
             implementation(libs.supabase.auth)
             implementation(libs.supabase.functions)
             implementation(libs.reorderable)
+            // TMDB->Xtream match index: framework artifact resolves to AndroidSQLiteDriver
+            // on Android and NativeSQLiteDriver (system libsqlite3) on iOS — no bundled binary
+            implementation(libs.androidx.sqlite)
+            implementation(libs.androidx.sqlite.framework)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

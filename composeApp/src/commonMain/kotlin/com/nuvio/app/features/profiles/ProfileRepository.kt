@@ -165,6 +165,7 @@ object ProfileRepository {
         com.nuvio.app.features.iptv.XtreamItemRegistry.resetForProfile()
         com.nuvio.app.features.iptv.XtreamHubRepository.resetForProfile()
         com.nuvio.app.features.iptv.XtreamSearchIndex.resetForProfile()
+        com.nuvio.app.features.iptv.match.XtreamMatchSyncService.reset()
         ThemeSettingsRepository.onProfileChanged()
         PosterCardStyleRepository.onProfileChanged()
         PlayerSettingsRepository.onProfileChanged()

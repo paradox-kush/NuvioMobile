@@ -81,7 +81,10 @@ data class XtreamVodStreamDto(
     @SerialName("stream_icon") val streamIcon: String? = null,
     @SerialName("category_id") val categoryId: String? = null,
     @SerialName("container_extension") val containerExtension: String? = null,
-    val rating: String? = null
+    val rating: String? = null,
+    // XUI.one panels ship a TMDB id right in the bulk list (~90% populated on tested
+    // providers) — the free tier of TMDB->stream matching.
+    @Serializable(with = FlexIntSerializer::class) val tmdb: Int? = null
 )
 
 @Serializable
@@ -91,7 +94,11 @@ data class XtreamSeriesDto(
     val cover: String? = null,
     @SerialName("category_id") val categoryId: String? = null,
     val plot: String? = null,
-    val rating: String? = null
+    val rating: String? = null,
+    @Serializable(with = FlexIntSerializer::class) val tmdb: Int? = null,
+    // panels send BOTH spellings; releaseDate is the one XUI populates
+    @SerialName("releaseDate") val releaseDate: String? = null,
+    @SerialName("release_date") val releaseDateAlt: String? = null
 )
 
 @Serializable
@@ -138,7 +145,9 @@ data class XtreamMovie(
     val poster: String?,
     val categoryId: String?,
     val rating: String?,
-    val streamUrl: String
+    val streamUrl: String,
+    val tmdb: Int? = null,
+    val containerExtension: String? = null
 )
 
 data class XtreamSeriesItem(
@@ -147,7 +156,9 @@ data class XtreamSeriesItem(
     val poster: String?,
     val categoryId: String?,
     val plot: String?,
-    val rating: String?
+    val rating: String?,
+    val tmdb: Int? = null,
+    val year: Int? = null
 )
 
 data class XtreamProgram(
@@ -188,6 +199,8 @@ data class XtreamSeriesDetail(
     val plot: String?,
     val genres: List<String>,
     val rating: String?,
+    /** First-air date — the only verify signal old panels give for series (no tmdb there). */
+    val releaseDate: String?,
     val episodes: List<XtreamEpisode>
 )
 

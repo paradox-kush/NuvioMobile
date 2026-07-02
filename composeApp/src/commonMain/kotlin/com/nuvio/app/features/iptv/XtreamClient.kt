@@ -72,7 +72,9 @@ object XtreamClient {
                 poster = dto.streamIcon?.ifBlank { null },
                 categoryId = dto.categoryId,
                 rating = dto.rating,
-                streamUrl = streamUrl(acc, "movie", id, dto.containerExtension?.ifBlank { null } ?: "mp4")
+                streamUrl = streamUrl(acc, "movie", id, dto.containerExtension?.ifBlank { null } ?: "mp4"),
+                tmdb = dto.tmdb?.takeIf { it > 0 },
+                containerExtension = dto.containerExtension?.ifBlank { null }
             )
         }
     }
@@ -80,7 +82,11 @@ object XtreamClient {
     suspend fun series(acc: XtreamAccount, categoryId: String? = null): Result<List<XtreamSeriesItem>> = call {
         decode<List<XtreamSeriesDto>>(playerApi(acc, "get_series", categoryId)).mapNotNull { dto ->
             val id = dto.seriesId ?: return@mapNotNull null
-            XtreamSeriesItem(id, dto.name ?: "", dto.cover?.ifBlank { null }, dto.categoryId, dto.plot, dto.rating)
+            XtreamSeriesItem(
+                id, dto.name ?: "", dto.cover?.ifBlank { null }, dto.categoryId, dto.plot, dto.rating,
+                tmdb = dto.tmdb?.takeIf { it > 0 },
+                year = (dto.releaseDate ?: dto.releaseDateAlt)?.trim()?.take(4)?.toIntOrNull()
+            )
         }
     }
 
@@ -139,10 +145,11 @@ object XtreamClient {
         XtreamSeriesDetail(
             name = info?.get("name").asStringOrNull(),
             poster = info?.get("cover").asStringOrNull(),
-            tmdbId = info?.get("tmdb_id").asIntOrNull(),
+            tmdbId = (info?.get("tmdb_id") ?: info?.get("tmdb")).asIntOrNull(),
             plot = info?.get("plot").asStringOrNull(),
             genres = info?.get("genre").asStringOrNull()?.splitCsv() ?: emptyList(),
             rating = info?.get("rating").asStringOrNull(),
+            releaseDate = (info?.get("releaseDate") ?: info?.get("release_date") ?: info?.get("releasedate")).asStringOrNull(),
             episodes = episodes
         )
     }
