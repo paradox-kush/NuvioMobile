@@ -695,10 +695,16 @@ private fun MobileSettingsScreen(
                         onPageChange(SettingsPage.IptvContent)
                     },
                 )
-                SettingsPage.IptvContent -> xtreamContentSettingsContent(
-                    isTablet = false,
-                    state = xtreamState,
-                )
+                SettingsPage.IptvContent -> if (XtreamContentPage.accountId == null) {
+                    // Process-death restore: the page survives (rememberSaveable) but the
+                    // target playlist id is a plain var — bounce back to the playlist list.
+                    item { LaunchedEffect(Unit) { onPageChange(SettingsPage.Iptv) } }
+                } else {
+                    xtreamContentSettingsContent(
+                        isTablet = false,
+                        state = xtreamState,
+                    )
+                }
                 SettingsPage.TraktAuthentication -> traktSettingsContent(
                     isTablet = false,
                     uiState = traktAuthUiState,
@@ -1111,10 +1117,16 @@ private fun TabletSettingsScreen(
                             onPageChange(SettingsPage.IptvContent)
                         },
                     )
-                    SettingsPage.IptvContent -> xtreamContentSettingsContent(
-                        isTablet = true,
-                        state = xtreamState,
-                    )
+                    SettingsPage.IptvContent -> if (XtreamContentPage.accountId == null) {
+                        // Process-death restore: the page survives (rememberSaveable) but the
+                        // target playlist id is a plain var — bounce back to the playlist list.
+                        item { LaunchedEffect(Unit) { onPageChange(SettingsPage.Iptv) } }
+                    } else {
+                        xtreamContentSettingsContent(
+                            isTablet = true,
+                            state = xtreamState,
+                        )
+                    }
                     SettingsPage.TraktAuthentication -> traktSettingsContent(
                         isTablet = true,
                         uiState = traktAuthUiState,

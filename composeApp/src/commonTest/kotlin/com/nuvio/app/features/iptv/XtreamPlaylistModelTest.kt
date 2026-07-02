@@ -17,8 +17,9 @@ import kotlin.test.assertTrue
 
 /**
  * Playlist-manager P1 contract tests: additive model defaults (old persisted JSON must load
- * unchanged), the sync_push_iptv_playlists payload shape (field names + omission rules match
- * the backend migration exactly), and lenient category_selections decoding.
+ * unchanged), the sync_push_iptv_playlists payload/params shape (field names, omission rules
+ * and source-type scoping match the backend migration exactly), the pull's usable-row filter,
+ * edit option carry-over, and lenient category_selections decoding.
  */
 class XtreamPlaylistModelTest {
 
@@ -104,6 +105,78 @@ class XtreamPlaylistModelTest {
         assertEquals(listOf("1", "2"), selections["live"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertFalse("movies" in selections)             // null per-type list omitted
         assertFalse("series" in selections)
+    }
+
+    @Test
+    fun pushParamsScopeEveryPushToXtreamSourceType() {
+        val params = playlistPushParams(profileId = 3, accounts = listOf(base))
+        assertEquals(3, params["p_profile_id"]!!.jsonPrimitive.int)
+        assertEquals(1, params["p_playlists"]!!.jsonArray.size)
+        // Every push is scoped so a P1 full-replace can't delete a newer client's m3u/stalker rows.
+        assertEquals(listOf("xtream"), params["p_source_types"]!!.jsonArray.map { it.jsonPrimitive.content })
+        // Regular pushes omit the migration guard entirely.
+        assertFalse("p_only_if_empty" in params)
+    }
+
+    @Test
+    fun migrationPushParamsSetOnlyIfEmpty() {
+        val params = playlistPushParams(profileId = 1, accounts = listOf(base), onlyIfEmpty = true)
+        // Two-device first-login race: the loser's migration push must no-op server-side.
+        assertEquals(true, params["p_only_if_empty"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(listOf("xtream"), params["p_source_types"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    @Test
+    fun pullWithOnlyForeignSourceRowsIsAnEmptyRemote() {
+        val foreign = listOf(
+            PlaylistRow(sourceType = "m3u_url", name = "M3U"),
+            PlaylistRow(sourceType = "stalker", name = "Portal"),
+        )
+        // Zero usable xtream rows => empty remote; never applied as an empty list over local state.
+        assertTrue(usableRemoteAccounts(foreign).isEmpty())
+
+        // Malformed xtream rows (missing identity columns) are skipped too.
+        assertTrue(usableRemoteAccounts(listOf(PlaylistRow(baseUrl = null, username = "u"))).isEmpty())
+
+        val mixed = foreign + PlaylistRow(baseUrl = "http://h:80", username = "u", password = "p")
+        val usable = usableRemoteAccounts(mixed).single()
+        assertEquals("http://h:80|u", usable.id)
+    }
+
+    @Test
+    fun editCarriesProviderSpecificOptionsOnlyForTheSamePlaylist() {
+        val old = base.copy(
+            enabled = false,
+            epgUrl = "http://epg.example",
+            dnsProvider = "quad9",
+            autoRefreshHours = 12,
+            contentTypes = setOf(CONTENT_TYPE_LIVE),
+            categorySelections = CategorySelections(live = listOf("1")),
+        )
+
+        // Same playlist (same username, moved domain): everything carries over.
+        val moved = XtreamAccount(id = "http://new:80|u", name = "Moved", baseUrl = "http://new:80", username = "u", password = "p2")
+        val sameCarried = carryPlaylistOptions(old, moved)
+        assertFalse(sameCarried.enabled)
+        assertEquals("http://epg.example", sameCarried.epgUrl)
+        assertEquals("quad9", sameCarried.dnsProvider)
+        assertEquals(12, sameCarried.autoRefreshHours)
+        assertEquals(setOf(CONTENT_TYPE_LIVE), sameCarried.contentTypes)
+        assertEquals(CategorySelections(live = listOf("1")), sameCarried.categorySelections)
+
+        // Same server, rotated username: still the same playlist.
+        val rotated = XtreamAccount(id = "http://h:80|u2", name = "Rotated", baseUrl = "http://h:80", username = "u2", password = "p")
+        assertEquals(CategorySelections(live = listOf("1")), carryPlaylistOptions(old, rotated).categorySelections)
+
+        // Different playlist: provider-specific options reset, provider-agnostic ones carry.
+        val other = XtreamAccount(id = "http://other:80|x", name = "Other", baseUrl = "http://other:80", username = "x", password = "y")
+        val reset = carryPlaylistOptions(old, other)
+        assertEquals(CategorySelections(), reset.categorySelections)
+        assertNull(reset.epgUrl)
+        assertFalse(reset.enabled)
+        assertEquals("quad9", reset.dnsProvider)
+        assertEquals(12, reset.autoRefreshHours)
+        assertEquals(setOf(CONTENT_TYPE_LIVE), reset.contentTypes)
     }
 
     @Test

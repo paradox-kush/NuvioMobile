@@ -45,8 +45,11 @@ object XtreamSearchIndex {
         val movies = mutableListOf<MetaPreview>()
         for (account in accounts) {
             // Disabled content types are skipped per playlist; live channels carry a category id,
-            // so category selections filter them too. (Match-index movie/series rows carry no
-            // category id — selections can't filter those here.)
+            // so category selections filter them too. For movies/series only the explicit EMPTY
+            // selection (= none) is honored, by skipping the type outright.
+            // ponytail: match-index movie/series rows carry no category id, so a PARTIAL
+            // category selection can't filter them here — raise that ceiling only by storing
+            // category ids in the match index.
             if (account.typeEnabled(CONTENT_TYPE_LIVE)) {
                 ensureChannels(account).asSequence()
                     .filter { account.allowsCategory(CONTENT_TYPE_LIVE, it.categoryId) }
@@ -55,7 +58,9 @@ object XtreamSearchIndex {
                     }
             }
 
-            if (account.typeEnabled(CONTENT_TYPE_MOVIES)) {
+            if (account.typeEnabled(CONTENT_TYPE_MOVIES) &&
+                account.categorySelections.forType(CONTENT_TYPE_MOVIES)?.isEmpty() != true
+            ) {
                 withTimeoutOrNull(INDEX_WAIT_MS) { XtreamTmdbResolver.ensureIndexed(account, MatchKind.MOVIE) }
                 XtreamMatchIndex.searchByName(account.id, MatchKind.MOVIE, q, PER_TYPE_CAP).forEach { item ->
                     val movie = XtreamMovie(
@@ -73,7 +78,9 @@ object XtreamSearchIndex {
                 }
             }
 
-            if (account.typeEnabled(CONTENT_TYPE_SERIES)) {
+            if (account.typeEnabled(CONTENT_TYPE_SERIES) &&
+                account.categorySelections.forType(CONTENT_TYPE_SERIES)?.isEmpty() != true
+            ) {
                 withTimeoutOrNull(INDEX_WAIT_MS) { XtreamTmdbResolver.ensureIndexed(account, MatchKind.SERIES) }
                 XtreamMatchIndex.searchByName(account.id, MatchKind.SERIES, q, PER_TYPE_CAP).forEach { item ->
                     val seriesItem = XtreamSeriesItem(

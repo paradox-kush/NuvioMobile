@@ -116,16 +116,9 @@ object XtreamRepository {
             onResult(false)
             return
         }
-        // Carry every option over — a credential/URL edit must not wipe content-type or
-        // category choices (nor the other playlist options).
-        val account = candidate.copy(
-            enabled = old.enabled,
-            epgUrl = old.epgUrl,
-            dnsProvider = old.dnsProvider,
-            autoRefreshHours = old.autoRefreshHours,
-            contentTypes = old.contentTypes,
-            categorySelections = old.categorySelections,
-        )
+        // A credential/URL edit must not wipe the playlist options — but provider-specific
+        // ones only carry when the edit still targets the same playlist (see carryPlaylistOptions).
+        val account = carryPlaylistOptions(old, candidate)
         scope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
             XtreamClient.verify(account)
@@ -160,9 +153,8 @@ object XtreamRepository {
      * different playlist -> the old ids point at content that no longer exists, so drop them.
      */
     private fun migrateSavedData(old: XtreamAccount, new: XtreamAccount) {
-        val samePlaylist = old.username == new.username || old.baseUrl == new.baseUrl
         val oldPrefix = XtreamItemRegistry.accountPrefix(old.id)
-        val newPrefix = if (samePlaylist) XtreamItemRegistry.accountPrefix(new.id) else null
+        val newPrefix = if (samePlaylist(old, new)) XtreamItemRegistry.accountPrefix(new.id) else null
         LibraryRepository.migrateIdPrefix(oldPrefix, newPrefix)
         WatchProgressRepository.migrateIdPrefix(oldPrefix, newPrefix)
         WatchedRepository.migrateIdPrefix(oldPrefix, newPrefix)
@@ -211,4 +203,29 @@ object XtreamRepository {
         if (stored.isNullOrBlank()) return emptyList()
         return runCatching { json.decodeFromString<List<XtreamAccount>>(stored) }.getOrDefault(emptyList())
     }
+}
+
+/**
+ * Same playlist = same server or same username (e.g. a panel that moved domains or rotated
+ * creds) — the predicate both saved-data migration and option carry-over key off.
+ */
+internal fun samePlaylist(old: XtreamAccount, new: XtreamAccount): Boolean =
+    old.username == new.username || old.baseUrl == new.baseUrl
+
+/**
+ * Options carried onto an edited account. Provider-agnostic options (enabled, content types,
+ * DNS, auto-refresh) always carry over; provider-specific ones (category ids, EPG URL) only
+ * when the edit still targets the same playlist — another provider's category ids are
+ * meaningless there and would silently filter its whole catalog. internal for tests.
+ */
+internal fun carryPlaylistOptions(old: XtreamAccount, candidate: XtreamAccount): XtreamAccount {
+    val same = samePlaylist(old, candidate)
+    return candidate.copy(
+        enabled = old.enabled,
+        dnsProvider = old.dnsProvider,
+        autoRefreshHours = old.autoRefreshHours,
+        contentTypes = old.contentTypes,
+        epgUrl = if (same) old.epgUrl else null,
+        categorySelections = if (same) old.categorySelections else CategorySelections(),
+    )
 }

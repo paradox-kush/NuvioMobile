@@ -32,9 +32,12 @@ import kotlinx.serialization.json.put
  * Push = full-replace RPC on change (debounced); pull = direct RLS-scoped select on login. Only runs
  * for a real (non-anonymous) session — the local "Anonymous" state keeps playlists device-local.
  *
- * Playlist-manager P1: reads/writes the new `iptv_playlists` table. When it's empty, the pull
- * falls back to the legacy `xtream_accounts` rows (written by older app versions) and migrates
- * them up to the new table. The legacy RPC is never written again (no dual-write).
+ * Playlist-manager P1: reads/writes the new `iptv_playlists` table. Every push is scoped to
+ * source_type 'xtream' (p_source_types) so this client can never delete a newer client's
+ * m3u/stalker rows. When the table holds no usable xtream rows, the pull falls back to the
+ * legacy `xtream_accounts` rows (written by older app versions), migrates them up (guarded by
+ * p_only_if_empty against a two-device first-login race), then clears the legacy rows — a
+ * one-shot migration, so stale legacy rows can't resurrect playlists deleted later.
  */
 object XtreamAccountSyncService {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -44,24 +47,6 @@ object XtreamAccountSyncService {
     @Volatile
     var isSyncingFromRemote: Boolean = false
     private var pushJob: Job? = null
-
-    /** `iptv_playlists` row (only the columns this client uses; the rest ignore-unknown away). */
-    @Serializable
-    private data class PlaylistRow(
-        @SerialName("source_type") val sourceType: String = "xtream",
-        val name: String? = null,
-        val enabled: Boolean = true,
-        @SerialName("sort_order") val sortOrder: Int = 0,
-        @SerialName("base_url") val baseUrl: String? = null,
-        val username: String? = null,
-        val password: String? = null,
-        @SerialName("epg_url") val epgUrl: String? = null,
-        @SerialName("dns_provider") val dnsProvider: String = "system",
-        @SerialName("auto_refresh_hours") val autoRefreshHours: Int = 0,
-        @SerialName("content_types") val contentTypes: List<String> = ALL_CONTENT_TYPES.toList(),
-        // jsonb; decoded leniently by hand — a malformed shape must not sink the whole pull
-        @SerialName("category_selections") val categorySelections: JsonElement? = null,
-    )
 
     /** Legacy `xtream_accounts` row — read-only fallback for rows synced by older app versions. */
     @Serializable
@@ -95,18 +80,37 @@ object XtreamAccountSyncService {
         runCatching {
             if (ProfileRepository.activeProfileId != profileId) return@runCatching
             val accounts = XtreamRepository.uiState.value.accounts
-            val params = buildJsonObject {
-                put("p_profile_id", profileId)
-                put("p_playlists", playlistPushPayload(accounts))
-            }
-            SupabaseProvider.client.postgrest.rpc("sync_push_iptv_playlists", params)
+            SupabaseProvider.client.postgrest
+                .rpc("sync_push_iptv_playlists", playlistPushParams(profileId, accounts))
             log.d { "pushToRemote — ${accounts.size} playlists" }
         }.onFailure { e -> log.e(e) { "pushToRemote — FAILED" } }
     }
 
     /**
-     * Pull this profile's playlists on login. New table first; empty new table falls back to
-     * the legacy rows (then migrates them up); both empty + non-empty local => migrate local up.
+     * One-shot legacy migration: push the just-applied legacy playlists up with p_only_if_empty
+     * (two devices racing on first login — the loser no-ops instead of clobbering the winner),
+     * then clear the legacy rows via the old RPC. Without the clear, deleting every playlist
+     * later (empty new table + stale legacy rows) would resurrect them on the next login pull.
+     * The clear only runs after a successful new-table push, so a failed push retries whole.
+     */
+    private suspend fun migrateLegacyUp(profileId: Int) {
+        runCatching {
+            if (ProfileRepository.activeProfileId != profileId) return@runCatching
+            val accounts = XtreamRepository.uiState.value.accounts
+            SupabaseProvider.client.postgrest
+                .rpc("sync_push_iptv_playlists", playlistPushParams(profileId, accounts, onlyIfEmpty = true))
+            SupabaseProvider.client.postgrest.rpc("sync_push_xtream_accounts", buildJsonObject {
+                put("p_profile_id", profileId)
+                put("p_accounts", JsonArray(emptyList()))
+            })
+            log.i { "migrateLegacyUp — ${accounts.size} playlists migrated, legacy rows cleared" }
+        }.onFailure { e -> log.e(e) { "migrateLegacyUp — FAILED" } }
+    }
+
+    /**
+     * Pull this profile's playlists on login. New table first; no usable xtream rows there
+     * falls back to the legacy rows (then migrates them up, one-shot); both empty + non-empty
+     * local => migrate local up.
      */
     suspend fun pullFromServer(profileId: Int) {
         if (!authed() || ProfileRepository.activeProfileId != profileId) return
@@ -119,12 +123,13 @@ object XtreamAccountSyncService {
                 }
                 .decodeList<PlaylistRow>()
             if (ProfileRepository.activeProfileId != profileId) return@runCatching
-            if (rows.isNotEmpty()) {
-                // Rows exist in the new table — it is the source of truth, even if some rows
-                // are source types this P1 client can't use yet (skipped, never pushed over).
-                apply(profileId, rows.mapNotNull { it.toAccount() })
+            val playlists = usableRemoteAccounts(rows)
+            if (playlists.isNotEmpty()) {
+                apply(profileId, playlists)
                 return@runCatching
             }
+            // Zero usable xtream rows (empty table, or only a newer client's m3u/stalker rows)
+            // = empty remote for this client — never apply an empty list over local state.
 
             val legacy = SupabaseProvider.client.postgrest
                 .from("xtream_accounts")
@@ -137,7 +142,7 @@ object XtreamAccountSyncService {
             if (legacy.isNotEmpty()) {
                 log.i { "pullFromServer — migrating ${legacy.size} legacy xtream_accounts rows up" }
                 apply(profileId, legacy.map { it.toAccount() })
-                pushToRemote(profileId)   // write them to the NEW table (legacy table stays for old clients)
+                migrateLegacyUp(profileId)
             } else if (XtreamRepository.uiState.value.accounts.isNotEmpty()) {
                 log.i { "pullFromServer — remote empty, migrating local playlists up" }
                 pushToRemote(profileId)
@@ -155,27 +160,6 @@ object XtreamAccountSyncService {
         log.i { "pullFromServer — applied ${accounts.size} playlists" }
     }
 
-    /** P1 clients only understand xtream rows; other source types (P2/P4) are skipped, not synced down. */
-    private fun PlaylistRow.toAccount(): XtreamAccount? {
-        if (sourceType != "xtream") return null
-        val base = baseUrl ?: return null
-        val user = username ?: return null
-        return XtreamAccount(
-            id = "$base|$user",
-            name = name ?: base,
-            baseUrl = base,
-            username = user,
-            password = password ?: "",
-            enabled = enabled,
-            sourceType = sourceType,
-            epgUrl = epgUrl,
-            dnsProvider = dnsProvider,
-            autoRefreshHours = autoRefreshHours,
-            contentTypes = contentTypes.toSet(),
-            categorySelections = parseCategorySelections(categorySelections),
-        )
-    }
-
     private fun LegacyRow.toAccount(): XtreamAccount = XtreamAccount(
         id = "$baseUrl|$username",
         name = name ?: baseUrl,
@@ -184,6 +168,69 @@ object XtreamAccountSyncService {
         password = password,
         enabled = enabled,
     )
+}
+
+/** `iptv_playlists` row (only the columns this client uses; the rest ignore-unknown away). internal for tests. */
+@Serializable
+internal data class PlaylistRow(
+    @SerialName("source_type") val sourceType: String = "xtream",
+    val name: String? = null,
+    val enabled: Boolean = true,
+    @SerialName("sort_order") val sortOrder: Int = 0,
+    @SerialName("base_url") val baseUrl: String? = null,
+    val username: String? = null,
+    val password: String? = null,
+    @SerialName("epg_url") val epgUrl: String? = null,
+    @SerialName("dns_provider") val dnsProvider: String = "system",
+    @SerialName("auto_refresh_hours") val autoRefreshHours: Int = 0,
+    @SerialName("content_types") val contentTypes: List<String> = ALL_CONTENT_TYPES.toList(),
+    // jsonb; decoded leniently by hand — a malformed shape must not sink the whole pull
+    @SerialName("category_selections") val categorySelections: JsonElement? = null,
+)
+
+/** P1 clients only understand xtream rows; other source types (P2/P4) are skipped, not synced down. */
+internal fun PlaylistRow.toAccount(): XtreamAccount? {
+    if (sourceType != "xtream") return null
+    val base = baseUrl ?: return null
+    val user = username ?: return null
+    return XtreamAccount(
+        id = "$base|$user",
+        name = name ?: base,
+        baseUrl = base,
+        username = user,
+        password = password ?: "",
+        enabled = enabled,
+        sourceType = sourceType,
+        epgUrl = epgUrl,
+        dnsProvider = dnsProvider,
+        autoRefreshHours = autoRefreshHours,
+        contentTypes = contentTypes.toSet(),
+        categorySelections = parseCategorySelections(categorySelections),
+    )
+}
+
+/**
+ * The pull's emptiness decision happens AFTER this filter: rows of only foreign source types
+ * (a newer client's m3u/stalker playlists) are an empty remote for this P1 client — they must
+ * never be applied as an empty list over local state. internal for tests.
+ */
+internal fun usableRemoteAccounts(rows: List<PlaylistRow>): List<XtreamAccount> =
+    rows.mapNotNull { it.toAccount() }
+
+/**
+ * RPC params for `sync_push_iptv_playlists`. Every push is scoped to p_source_types ['xtream']
+ * so the full-replace can never delete a newer client's m3u/stalker rows; p_only_if_empty is
+ * only set on the legacy-migration push (omitted otherwise). internal for tests.
+ */
+internal fun playlistPushParams(
+    profileId: Int,
+    accounts: List<XtreamAccount>,
+    onlyIfEmpty: Boolean = false,
+): JsonObject = buildJsonObject {
+    put("p_profile_id", profileId)
+    put("p_playlists", playlistPushPayload(accounts))
+    if (onlyIfEmpty) put("p_only_if_empty", true)
+    put("p_source_types", JsonArray(listOf(JsonPrimitive("xtream"))))
 }
 
 /**

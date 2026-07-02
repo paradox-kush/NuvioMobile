@@ -74,15 +74,20 @@ internal fun LazyListScope.xtreamContentSettingsContent(
         var expandedType by remember(account.id) { mutableStateOf<String?>(null) }
         // One cheap categories call per type (id + name only) so the counts can render.
         var categories by remember(account.id) { mutableStateOf<Map<String, List<XtreamCategory>>>(emptyMap()) }
-        LaunchedEffect(account.id) {
+        // Failed fetches must not spin forever: track per-type failure and allow retries.
+        var failedTypes by remember(account.id) { mutableStateOf<Set<String>>(emptySet()) }
+        var fetchAttempt by remember(account.id) { mutableStateOf(0) }
+        LaunchedEffect(account.id, fetchAttempt) {
             for ((type, _) in TYPE_LABELS) {
                 if (categories[type] != null) continue
+                failedTypes = failedTypes - type   // back to the spinner while (re)fetching
                 val fetched = when (type) {
                     CONTENT_TYPE_LIVE -> XtreamClient.liveCategories(account)
                     CONTENT_TYPE_MOVIES -> XtreamClient.vodCategories(account)
                     else -> XtreamClient.seriesCategories(account)
                 }.getOrNull()
                 if (fetched != null) categories = categories + (type to fetched)
+                else failedTypes = failedTypes + type
             }
         }
 
@@ -92,7 +97,10 @@ internal fun LazyListScope.xtreamContentSettingsContent(
                 account = account,
                 categories = categories,
                 isTablet = isTablet,
-                onOpenType = { expandedType = it },
+                onOpenType = {
+                    if (categories[it] == null) fetchAttempt++   // re-attempt a failed/stuck fetch
+                    expandedType = it
+                },
             )
         } else {
             CategoryChecklist(
@@ -100,6 +108,8 @@ internal fun LazyListScope.xtreamContentSettingsContent(
                 type = type,
                 label = TYPE_LABELS.first { it.first == type }.second,
                 categories = categories[type],
+                failed = type in failedTypes,
+                onRetry = { fetchAttempt++ },
                 onBack = { expandedType = null },
             )
         }
@@ -191,6 +201,8 @@ private fun CategoryChecklist(
     type: String,
     label: String,
     categories: List<XtreamCategory>?,
+    failed: Boolean,
+    onRetry: () -> Unit,
     onBack: () -> Unit,
 ) {
     val selection = account.categorySelections.forType(type)
@@ -211,7 +223,7 @@ private fun CategoryChecklist(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 val count = when {
-                    categories == null -> "Loading…"
+                    categories == null -> if (failed) "Not loaded" else "Loading…"
                     selection == null -> "${categories.size}/${categories.size} selected"
                     else -> "${selection.size}/${categories.size} selected"
                 }
@@ -228,6 +240,18 @@ private fun CategoryChecklist(
             TextButton(onClick = { setSelection(account.id, type, emptyList()) }) { Text("Deselect all") }
         }
         when {
+            categories == null && failed -> Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Couldn't load categories.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onRetry) { Text("Retry") }
+            }
             categories == null -> Box(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
                 contentAlignment = Alignment.Center,
