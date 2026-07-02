@@ -43,6 +43,7 @@ internal fun LazyListScope.xtreamSettingsContent(
     item {
         var showAddDialog by remember { mutableStateOf(false) }
         var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
+        var editFor by remember { mutableStateOf<XtreamAccount?>(null) }
 
         SettingsSection(title = "IPTV (Xtream Codes)", isTablet = isTablet) {
             SettingsGroup(isTablet = isTablet) {
@@ -82,7 +83,16 @@ internal fun LazyListScope.xtreamSettingsContent(
             AlertDialog(
                 onDismissRequest = { actionsFor = null },
                 title = { Text(account.name) },
-                text = { XtreamAccountDetails(account) },
+                text = {
+                    Column {
+                        XtreamAccountDetails(account)
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = {
+                            actionsFor = null
+                            editFor = account
+                        }) { Text("Edit URL / credentials") }
+                    }
+                },
                 confirmButton = {
                     TextButton(onClick = {
                         XtreamRepository.setEnabled(account.id, !account.enabled)
@@ -94,6 +104,23 @@ internal fun LazyListScope.xtreamSettingsContent(
                         XtreamRepository.remove(account.id)
                         actionsFor = null
                     }) { Text("Remove") }
+                },
+            )
+        }
+
+        editFor?.let { account ->
+            XtreamAddDialog(
+                state = state,
+                initial = account,
+                onSubmitUrl = { url ->
+                    XtreamRepository.editFromUrl(account.id, url) { ok -> if (ok) editFor = null }
+                },
+                onSubmitManual = { server, user, pass, name ->
+                    XtreamRepository.editManual(account.id, server, user, pass, name) { ok -> if (ok) editFor = null }
+                },
+                onDismiss = {
+                    XtreamRepository.clearError()
+                    editFor = null
                 },
             )
         }
@@ -162,13 +189,14 @@ private fun XtreamAddDialog(
     onSubmitUrl: (String) -> Unit,
     onSubmitManual: (server: String, user: String, pass: String, name: String?) -> Unit,
     onDismiss: () -> Unit,
+    initial: XtreamAccount? = null,
 ) {
-    var manualMode by remember { mutableStateOf(false) }
+    var manualMode by remember { mutableStateOf(initial != null) }
     var url by remember { mutableStateOf("") }
-    var server by remember { mutableStateOf("") }
-    var user by remember { mutableStateOf("") }
-    var pass by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("") }
+    var server by remember { mutableStateOf(initial?.baseUrl ?: "") }
+    var user by remember { mutableStateOf(initial?.username ?: "") }
+    var pass by remember { mutableStateOf(initial?.password ?: "") }
+    var name by remember { mutableStateOf(initial?.name ?: "") }
 
     val canSubmit = if (manualMode) {
         server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()
@@ -184,7 +212,7 @@ private fun XtreamAddDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add IPTV account") },
+        title = { Text(if (initial != null) "Edit IPTV account" else "Add IPTV account") },
         text = {
             Column {
                 // mode toggle
@@ -254,7 +282,7 @@ private fun XtreamAddDialog(
         },
         confirmButton = {
             Button(onClick = submit, enabled = canSubmit && !state.isValidating) {
-                Text(if (state.isValidating) "Verifying…" else "Add")
+                Text(if (state.isValidating) "Verifying…" else if (initial != null) "Save" else "Add")
                 if (state.isValidating) {
                     Spacer(Modifier.width(8.dp))
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
