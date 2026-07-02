@@ -24,6 +24,10 @@ data class RadarUiState(
     val fixturesByLeague: Map<String, List<RadarFixture>> = emptyMap(),
     /** Event ids confirmed live by the livescore feed (5 covered sports). */
     val liveEventIds: Set<String> = emptySet(),
+    /** Sports the last FRESH fetch returned livescore data for — the feed is authoritative
+     *  for these (empty set after a cold-start disk load: stale feed data must not
+     *  suppress the time-window inference). */
+    val livescoreSports: Set<String> = emptySet(),
     val loadingFixtures: Boolean = false,
 ) {
     val followedLeagueIds: Set<String> get() = follows.map { it.leagueId }.toSet()
@@ -34,8 +38,14 @@ data class RadarUiState(
     fun activeFeatured(nowMs: Long): List<RadarFeaturedEvent> =
         catalog.featured.filter { it.isActive(nowMs) }
 
-    fun isLive(fixture: RadarFixture, nowMs: Long): Boolean =
-        fixture.id?.let { it in liveEventIds } ?: false || fixture.inferredLive(nowMs)
+    fun isLive(fixture: RadarFixture, nowMs: Long): Boolean {
+        val feedConfirmed = fixture.id?.let { it in liveEventIds } == true
+        val sport = fixture.sport?.lowercase()
+        // Fresh feed coverage for this sport -> the feed decides (a finished match must
+        // lose its badge even inside the inferred window); otherwise infer from kick-off.
+        return if (sport != null && sport in livescoreSports) feedConfirmed
+        else feedConfirmed || fixture.inferredLive(nowMs)
+    }
 
     /** Fixtures of the given leagues that are live or upcoming, soonest first. */
     fun upcoming(leagueIds: Collection<String>, nowMs: Long, cap: Int = 20): List<RadarFixture> =
@@ -132,10 +142,16 @@ object RadarRepository {
                     // Merge so leagues the server skipped (budget/partial) keep their cache.
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,
                     liveEventIds = liveIds(response),
+                    livescoreSports = response.livescore.keys.map { s -> s.lowercase() }.toSet(),
                     loadingFixtures = false,
                 )
             }
-            XtreamAccountStorage.saveRadarFixturesJson(profileAtStart, json.encodeToString(response))
+            // Persist the MERGED map — persisting only the raw response would drop leagues
+            // this (possibly partial) response omitted from the offline cache.
+            XtreamAccountStorage.saveRadarFixturesJson(
+                profileAtStart,
+                json.encodeToString(response.copy(fixtures = _uiState.value.fixturesByLeague)),
+            )
         }
     }
 

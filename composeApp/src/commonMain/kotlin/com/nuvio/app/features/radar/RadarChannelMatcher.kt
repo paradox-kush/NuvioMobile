@@ -49,9 +49,10 @@ object RadarChannelMatcher {
 
     // Channel-name markers of generic sports channels — weak candidates that the EPG stage
     // can confirm even when no league keyword appears in the channel name.
+    // Compared against normalize()d names — punctuation is already stripped.
     private val GENERIC_SPORT_MARKERS = listOf(
         "sport", "espn", "bein", "dazn", "eurosport", "supersport", "fox sports",
-        "sky sports", "tnt sports", "arena", "match!", "setanta", "premier sports",
+        "sky sports", "tnt sports", "arena", "setanta", "premier sports",
     )
 
     private val STOP_TOKENS = setOf("fc", "cf", "sc", "afc", "rc", "cd", "ac", "de", "the", "club", "los", "las")
@@ -153,10 +154,10 @@ object RadarChannelMatcher {
         eventTokens: List<String>,
     ): Int {
         if (name.isBlank()) return 0
-        val homeHit = homeTokens.any { name.contains(it) }
-        val awayHit = awayTokens.any { name.contains(it) }
-        val keywordHit = keywords.any { name.contains(it) }
-        val eventHit = eventTokens.count { name.contains(it) } >= 2
+        val homeHit = homeTokens.any { hits(name, it) }
+        val awayHit = awayTokens.any { hits(name, it) }
+        val keywordHit = keywords.any { hits(name, it) }
+        val eventHit = eventTokens.count { hits(name, it) } >= 2
         val genericHit = GENERIC_SPORT_MARKERS.any { name.contains(it) }
         return when {
             homeHit && awayHit -> 50
@@ -184,10 +185,10 @@ object RadarChannelMatcher {
             .mapNotNull { p ->
                 val text = normalize("${p.title} ${p.description}")
                 if (text.isBlank()) return@mapNotNull null
-                val home = homeTokens.any { text.contains(it) }
-                val away = awayTokens.any { text.contains(it) }
-                val keyword = keywords.any { text.contains(it) }
-                val event = eventTokens.count { text.contains(it) } >= 2
+                val home = homeTokens.any { hits(text, it) }
+                val away = awayTokens.any { hits(text, it) }
+                val keyword = keywords.any { hits(text, it) }
+                val event = eventTokens.count { hits(text, it) } >= 2
                 val score = when {
                     home && away -> 100
                     event -> 90
@@ -204,6 +205,15 @@ object RadarChannelMatcher {
     private fun normalize(s: String?): String =
         (s ?: "").lowercase().map { if (it.isLetterOrDigit()) it else ' ' }.joinToString("")
             .split(" ").filter { it.isNotBlank() }.joinToString(" ")
+
+    /**
+     * Short single tokens must match on WORD BOUNDARIES — plain substring makes "epl" hit
+     * "replay" and "wc" hit anything — while longer/multi-word keywords keep substring
+     * semantics ("premier league" should hit "premier league tv").
+     */
+    private fun hits(normalizedText: String, keyword: String): Boolean =
+        if (keyword.length < 5 && ' ' !in keyword) " $normalizedText ".contains(" $keyword ")
+        else normalizedText.contains(keyword)
 
     private fun teamTokens(team: String?): List<String> =
         normalize(team).split(" ").filter { it.length > 2 && it !in STOP_TOKENS }

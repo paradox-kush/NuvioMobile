@@ -59,19 +59,22 @@ object RadarSyncService {
     /** Debounced push after a local change (called from RadarRepository.persist()). */
     fun triggerPush() {
         pushJob?.cancel()
+        // Snapshot profile AND state NOW — reading uiState after the debounce races
+        // onProfileChanged's state reset, and a full-replace push of the reset (empty)
+        // state under the old profile id would wipe that profile's remote follows.
+        val profileId = ProfileRepository.activeProfileId
+        val snapshot = RadarRepository.uiState.value
         pushJob = scope.launch {
-            val profileId = ProfileRepository.activeProfileId
             delay(PUSH_DEBOUNCE_MS)
             if (ProfileRepository.activeProfileId != profileId) return@launch
             if (isSyncingFromRemote || !authed()) return@launch
-            pushToRemote(profileId)
+            pushToRemote(profileId, snapshot)
         }
     }
 
-    private suspend fun pushToRemote(profileId: Int) {
+    private suspend fun pushToRemote(profileId: Int, state: RadarUiState = RadarRepository.uiState.value) {
         runCatching {
             if (ProfileRepository.activeProfileId != profileId) return@runCatching
-            val state = RadarRepository.uiState.value
             val params = buildJsonObject {
                 put("p_profile_id", profileId)
                 put("p_follows", buildJsonArray {

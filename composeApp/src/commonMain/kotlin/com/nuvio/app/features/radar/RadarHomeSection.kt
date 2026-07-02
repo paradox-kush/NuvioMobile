@@ -142,7 +142,7 @@ fun RadarHomeSection(
             text = {
                 Text(
                     "See live and upcoming ${featured.title} matches (${featured.from} – ${featured.to}) " +
-                        "on your home screen. You can change this anytime from the Sports tab.",
+                        "on your home screen. Either way, everything stays available in the Sports tab.",
                 )
             },
             confirmButton = {
