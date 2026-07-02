@@ -33,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -54,7 +55,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
+import com.nuvio.app.core.ui.NuvioPrimaryButton
+import com.nuvio.app.core.ui.NuvioSurfaceCard
 import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.iptv.XtreamRepository
 
 /**
@@ -206,23 +210,25 @@ private fun SportsOverview(
 
 @Composable
 private fun FollowCta(onOpenBrowse: () -> Unit) {
-    Card(
+    // HomeEmptyStateCard pattern: NuvioSurfaceCard + NuvioPrimaryButton.
+    NuvioSurfaceCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s8),
-        onClick = onOpenBrowse,
     ) {
-        Column(Modifier.padding(NuvioTokens.Space.s16)) {
-            Text("Follow your sports", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(NuvioTokens.Space.s4))
-            Text(
-                "Pick leagues and events to follow — upcoming matches show up here, and Tuvora finds which of your channels is showing them.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(NuvioTokens.Space.s8))
-            Text("Browse sports →", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-        }
+        Text(
+            "Follow your sports",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.height(NuvioTokens.Space.s8))
+        Text(
+            "Pick leagues and events to follow — upcoming matches show up here, and Tuvora finds which of your channels is showing them.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(NuvioTokens.Space.s16))
+        NuvioPrimaryButton(text = "Browse sports", onClick = onOpenBrowse)
     }
 }
 
@@ -326,6 +332,13 @@ private fun LeagueToggleList(state: RadarUiState, category: RadarCategory) {
                 Switch(
                     checked = league.id in state.followedLeagueIds,
                     onCheckedChange = { RadarRepository.toggleFollow(league) },
+                    // Settings' switch palette (accent track) — never default M3 colors.
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.nuvio.colors.onAccent,
+                        checkedTrackColor = MaterialTheme.nuvio.colors.accent,
+                        uncheckedThumbColor = MaterialTheme.nuvio.colors.textMuted,
+                        uncheckedTrackColor = MaterialTheme.nuvio.colors.borderDefault,
+                    ),
                 )
             }
         }
@@ -350,7 +363,12 @@ private fun CategoryRowItem(
             .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(sportEmoji(category.icon), style = MaterialTheme.typography.titleLarge)
+        // Artwork-first like the rest of the app: the category's flagship league badge.
+        AsyncImage(
+            model = category.leagues.firstOrNull()?.badge,
+            contentDescription = null,
+            modifier = Modifier.size(32.dp),
+        )
         Spacer(Modifier.width(NuvioTokens.Space.s12))
         Column(Modifier.weight(1f)) {
             Text(category.name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
@@ -601,21 +619,5 @@ private fun ChannelMatchRow(match: RadarChannelMatcher.ChannelMatch, onPlay: () 
     }
 }
 
-private fun sportEmoji(icon: String): String = when (icon) {
-    "soccer" -> "⚽"
-    "basketball" -> "🏀"
-    "american_football" -> "🏈"
-    "baseball" -> "⚾"
-    "ice_hockey" -> "🏒"
-    "motorsport" -> "🏎️"
-    "fighting" -> "🥊"
-    "rugby" -> "🏉"
-    "aussie_rules" -> "🏉"
-    "cricket" -> "🏏"
-    "tennis" -> "🎾"
-    "cycling" -> "🚴"
-    "golf" -> "⛳"
-    else -> "🏆"
-}
 
 private val TABLET_TOP_BAR_INSET = 72.dp

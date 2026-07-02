@@ -14,7 +14,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.app.core.ui.NuvioPrimaryButton
+import com.nuvio.app.core.ui.NuvioSurfaceCard
 import com.nuvio.app.core.ui.NuvioTokens
 
 /**
@@ -97,40 +98,31 @@ fun RadarHomeSection(
         }
 
         if (state.follows.isEmpty() && !state.prefs.promoDismissed) {
-            Card(
+            // NuvioSurfaceCard + NuvioPrimaryButton = the app's card/CTA building blocks
+            // (HomeEmptyStateCard pattern) so this doesn't read as a foreign surface.
+            NuvioSurfaceCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s8),
             ) {
-                Row(
-                    modifier = Modifier.padding(
-                        start = NuvioTokens.Space.s16,
-                        top = NuvioTokens.Space.s12,
-                        end = NuvioTokens.Space.s4,
-                    ),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "Follow your sports, find your channels",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Spacer(Modifier.height(NuvioTokens.Space.s4))
-                        Text(
-                            "Pick leagues and events to follow — Tuvora shows you what's coming up and which of your channels is showing it.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        TextButton(
-                            onClick = onOpenSportsTab,
-                            contentPadding = PaddingValues(0.dp),
-                        ) { Text("→  Set up Radar") }
-                    }
+                Row(verticalAlignment = Alignment.Top) {
+                    Text(
+                        "Follow your sports, find your channels",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
                     IconButton(onClick = { RadarRepository.dismissPromo() }) {
                         Icon(Icons.Filled.Close, contentDescription = "Dismiss")
                     }
                 }
+                Text(
+                    "Pick leagues and events to follow — Tuvora shows you what's coming up and which of your channels is showing it.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(NuvioTokens.Space.s12))
+                NuvioPrimaryButton(text = "Set up Radar", onClick = onOpenSportsTab)
             }
         }
     }
