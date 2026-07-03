@@ -65,6 +65,38 @@ object XtreamRepository {
         )
     }
 
+    /**
+     * Add from the full "Add Playlist" form: server URL + username + password + optional name plus
+     * the playlist options collected on the form (EPG URL, DNS provider, auto-refresh). The identity
+     * comes from the fields (a pasted portal URL is auto-filled into them upstream);
+     * [xtreamAccountFromForm] layers the option fields on before the live verify + persist.
+     */
+    internal fun addFromForm(input: XtreamFormInput, onResult: (Boolean) -> Unit) {
+        verifyAndSave(
+            xtreamAccountFromForm(input),
+            "Enter a server URL, username and password",
+            onResult,
+        )
+    }
+
+    /**
+     * Edit an existing playlist from the full form. Re-verifies the (possibly changed) credentials,
+     * swaps the account in place, and applies the edited option fields. Provider-specific carry-over
+     * (category ids, when the identity is unchanged) is handled by [verifyAndReplace]/[carryPlaylistOptions];
+     * the form's own option fields (EPG/DNS/auto-refresh) always win because the form shows them.
+     */
+    internal fun editFromForm(oldId: String, input: XtreamFormInput, onResult: (Boolean) -> Unit) {
+        verifyAndReplace(
+            oldId,
+            xtreamAccountFromForm(input),
+            "Enter a server URL, username and password",
+            onResult,
+            // The form shows EPG/DNS/auto-refresh, so its candidate already carries the user's choices —
+            // don't let carry-over revert them to the old account's values.
+            keepCandidateFormOptions = true,
+        )
+    }
+
     private fun verifyAndSave(account: XtreamAccount?, parseError: String, onResult: (Boolean) -> Unit) {
         if (account == null) {
             _uiState.update { it.copy(error = parseError) }
@@ -109,7 +141,13 @@ object XtreamRepository {
      * watch progress, watched marks, recent channels) follow the account when it's still
      * the same playlist; a completely different playlist purges them instead.
      */
-    private fun verifyAndReplace(oldId: String, candidate: XtreamAccount?, parseError: String, onResult: (Boolean) -> Unit) {
+    private fun verifyAndReplace(
+        oldId: String,
+        candidate: XtreamAccount?,
+        parseError: String,
+        onResult: (Boolean) -> Unit,
+        keepCandidateFormOptions: Boolean = false,
+    ) {
         val old = _uiState.value.accounts.firstOrNull { it.id == oldId }
         if (old == null || candidate == null) {
             _uiState.update { it.copy(error = if (old == null) "Account no longer exists" else parseError) }
@@ -118,7 +156,7 @@ object XtreamRepository {
         }
         // A credential/URL edit must not wipe the playlist options — but provider-specific
         // ones only carry when the edit still targets the same playlist (see carryPlaylistOptions).
-        val account = carryPlaylistOptions(old, candidate)
+        val account = carryPlaylistOptions(old, candidate, keepCandidateFormOptions)
         scope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
             XtreamClient.verify(account)
@@ -217,15 +255,28 @@ internal fun samePlaylist(old: XtreamAccount, new: XtreamAccount): Boolean =
  * DNS, auto-refresh) always carry over; provider-specific ones (category ids, EPG URL) only
  * when the edit still targets the same playlist — another provider's category ids are
  * meaningless there and would silently filter its whole catalog. internal for tests.
+ *
+ * When [keepCandidateFormOptions] is set (the full "Add Playlist" form, which shows these fields),
+ * the candidate's own EPG URL / DNS provider / auto-refresh win instead of being reverted to the
+ * old account's — the user just edited them on the form. Content types + category selections are
+ * still carried (they live on a different page the form doesn't touch).
  */
-internal fun carryPlaylistOptions(old: XtreamAccount, candidate: XtreamAccount): XtreamAccount {
+internal fun carryPlaylistOptions(
+    old: XtreamAccount,
+    candidate: XtreamAccount,
+    keepCandidateFormOptions: Boolean = false,
+): XtreamAccount {
     val same = samePlaylist(old, candidate)
     return candidate.copy(
         enabled = old.enabled,
-        dnsProvider = old.dnsProvider,
-        autoRefreshHours = old.autoRefreshHours,
+        dnsProvider = if (keepCandidateFormOptions) candidate.dnsProvider else old.dnsProvider,
+        autoRefreshHours = if (keepCandidateFormOptions) candidate.autoRefreshHours else old.autoRefreshHours,
         contentTypes = old.contentTypes,
-        epgUrl = if (same) old.epgUrl else null,
+        epgUrl = when {
+            keepCandidateFormOptions -> candidate.epgUrl
+            same -> old.epgUrl
+            else -> null
+        },
         categorySelections = if (same) old.categorySelections else CategorySelections(),
     )
 }

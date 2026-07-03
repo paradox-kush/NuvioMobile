@@ -180,6 +180,89 @@ class XtreamPlaylistModelTest {
     }
 
     @Test
+    fun addPlaylistFormMapsOptionFieldsOntoAccount() {
+        // The "Add Playlist" form collects epgUrl/dnsProvider/autoRefreshHours; the mapping must
+        // land them on the XtreamAccount that gets verified + persisted (the model already syncs them).
+        val account = xtreamAccountFromForm(
+            XtreamFormInput(
+                serverUrl = "host.example.org:8080",
+                username = "user1",
+                password = "secret",
+                name = "  My Playlist  ",
+                epgUrl = "  http://epg.example/xmltv.php  ",
+                dnsProvider = "cloudflare",
+                autoRefreshHours = 48,
+            ),
+        )!!
+        assertEquals("http://host.example.org:8080|user1", account.id)
+        assertEquals("My Playlist", account.name)                 // trimmed
+        assertEquals("http://host.example.org:8080", account.baseUrl)
+        assertEquals("user1", account.username)
+        assertEquals("secret", account.password)
+        assertEquals("http://epg.example/xmltv.php", account.epgUrl)   // trimmed, persisted
+        assertEquals("cloudflare", account.dnsProvider)               // persisted
+        assertEquals(48, account.autoRefreshHours)                    // persisted
+        assertEquals("xtream", account.sourceType)
+        // Content types + category selections aren't on the form → stay at defaults.
+        assertEquals(setOf("live", "movies", "series"), account.contentTypes)
+        assertTrue(account.categorySelections.allNull)
+    }
+
+    @Test
+    fun addPlaylistFormBlanksBecomeNullOrDefault() {
+        val account = xtreamAccountFromForm(
+            XtreamFormInput(
+                serverUrl = "http://h:80",
+                username = "u",
+                password = "p",
+                name = null,
+                epgUrl = "   ",           // blank -> null (not persisted / synced as empty)
+                dnsProvider = "system",
+                autoRefreshHours = 0,     // "Off"
+            ),
+        )!!
+        assertNull(account.epgUrl)
+        assertEquals("system", account.dnsProvider)
+        assertEquals(0, account.autoRefreshHours)
+        assertEquals("h", account.name)   // falls back to host when no name given
+
+        // Missing identity fields => no account (form Save is gated on this too).
+        assertNull(
+            xtreamAccountFromForm(
+                XtreamFormInput(serverUrl = "", username = "u", password = "p", name = null, epgUrl = null, dnsProvider = "system", autoRefreshHours = 24),
+            ),
+        )
+    }
+
+    @Test
+    fun editFormKeepsCandidateOptionsButCarriesContentSelections() {
+        // Editing via the full form: the form OWNS epg/dns/auto-refresh (it shows them), so the
+        // candidate's values win over the old account's; content types + category selections live on
+        // a different page the form doesn't touch, so they carry over (same-playlist edit).
+        val old = base.copy(
+            epgUrl = "http://old.epg",
+            dnsProvider = "quad9",
+            autoRefreshHours = 12,
+            contentTypes = setOf(CONTENT_TYPE_LIVE),
+            categorySelections = CategorySelections(live = listOf("1")),
+        )
+        val candidate = xtreamAccountFromForm(
+            XtreamFormInput(
+                serverUrl = "http://h:80", username = "u", password = "p2", name = "Renamed",
+                epgUrl = "http://new.epg", dnsProvider = "google", autoRefreshHours = 72,
+            ),
+        )!!
+        val merged = carryPlaylistOptions(old, candidate, keepCandidateFormOptions = true)
+        // form-owned option fields: candidate wins
+        assertEquals("http://new.epg", merged.epgUrl)
+        assertEquals("google", merged.dnsProvider)
+        assertEquals(72, merged.autoRefreshHours)
+        // not-on-form fields: carried from old
+        assertEquals(setOf(CONTENT_TYPE_LIVE), merged.contentTypes)
+        assertEquals(CategorySelections(live = listOf("1")), merged.categorySelections)
+    }
+
+    @Test
     fun categorySelectionsColumnDecodesLeniently() {
         assertTrue(parseCategorySelections(null).allNull)
         assertTrue(parseCategorySelections(JsonNull).allNull)

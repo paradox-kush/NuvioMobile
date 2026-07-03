@@ -61,3 +61,20 @@ fun xtreamAccountFromFields(serverUrl: String, username: String, password: Strin
         password = pass
     )
 }
+
+/**
+ * Builds an account from the full "Add Playlist" form: the identity fields (server/username/password/
+ * name) plus the playlist options the form collects (EPG URL, DNS provider, auto-refresh). Returns
+ * null if the identity fields don't resolve to a valid host + credentials. Content types + category
+ * selections are edited on the separate "Content & Categories" page, so they keep XtreamAccount's
+ * defaults here. internal for unit tests.
+ */
+internal fun xtreamAccountFromForm(input: XtreamFormInput): XtreamAccount? {
+    val base = xtreamAccountFromFields(input.serverUrl, input.username, input.password, input.name)
+        ?: return null
+    return base.copy(
+        epgUrl = input.epgUrl?.trim()?.takeIf { it.isNotEmpty() },
+        dnsProvider = input.dnsProvider,
+        autoRefreshHours = input.autoRefreshHours,
+    )
+}
