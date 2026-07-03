@@ -2,6 +2,7 @@ package com.nuvio.app.features.iptv
 
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.profiles.ProfileRepository
+import com.nuvio.app.features.trakt.TraktPlatformClock
 import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import kotlinx.coroutines.CoroutineScope
@@ -72,12 +73,55 @@ object XtreamRepository {
      * [xtreamAccountFromForm] layers the option fields on before the live verify + persist.
      */
     internal fun addFromForm(input: XtreamFormInput, onResult: (Boolean) -> Unit) {
-        val account = if (input.sourceType == SOURCE_TYPE_M3U_URL) m3uAccountFromForm(input) else xtreamAccountFromForm(input)
-        verifyAndSave(
-            account,
-            if (input.sourceType == SOURCE_TYPE_M3U_URL) "Enter an M3U playlist URL" else "Enter a server URL, username and password",
-            onResult,
-        )
+        when (input.sourceType) {
+            SOURCE_TYPE_M3U_FILE -> addFileFromForm(input, existingId = null, onResult = onResult)
+            SOURCE_TYPE_M3U_URL -> verifyAndSave(m3uAccountFromForm(input), "Enter an M3U playlist URL", onResult)
+            else -> verifyAndSave(xtreamAccountFromForm(input), "Enter a server URL, username and password", onResult)
+        }
+    }
+
+    /**
+     * Add/replace an M3U-FILE playlist: build the account (stable id), copy the picked file into app
+     * storage at `{id}.m3u`, THEN verify (which ingests the LOCAL copy). The copy happens before verify
+     * so the ingest has bytes to read; a failed verify leaves the copy in place harmlessly (it'll be
+     * overwritten on the next attempt). Editing options with no re-pick reuses the existing copy.
+     */
+    private fun addFileFromForm(input: XtreamFormInput, existingId: String?, onResult: (Boolean) -> Unit) {
+        val account = m3uFileAccountFromForm(input, existingId = existingId, uniqueSuffix = TraktPlatformClock.nowEpochMs())
+        if (account == null) {
+            _uiState.update { it.copy(error = "Choose an M3U file to import") }
+            onResult(false)
+            return
+        }
+        scope.launch {
+            _uiState.update { it.copy(isValidating = true, error = null) }
+            // Copy the picked bytes into local storage first (skip when editing with no re-pick).
+            val copyOk = runCatching {
+                input.pickedFile?.let { copyM3UFileToStorage(account.id, it) }
+            }.isSuccess
+            if (!copyOk) {
+                _uiState.update { it.copy(isValidating = false, error = "Could not read the selected file") }
+                onResult(false)
+                return@launch
+            }
+            // No pick + no existing local copy = nothing to ingest.
+            if (input.pickedFile == null && !M3UFileStore.hasLocalCopy(account)) {
+                _uiState.update { it.copy(isValidating = false, error = "Choose an M3U file to import") }
+                onResult(false)
+                return@launch
+            }
+            M3UClient.verify(account)
+                .onSuccess {
+                    val updated = _uiState.value.accounts.filterNot { it.id == account.id } + account
+                    _uiState.update { it.copy(accounts = updated, isValidating = false) }
+                    persist()
+                    onResult(true)
+                }
+                .onFailure { e ->
+                    _uiState.update { it.copy(isValidating = false, error = e.message ?: "Could not read that playlist file") }
+                    onResult(false)
+                }
+        }
     }
 
     /**
@@ -87,6 +131,12 @@ object XtreamRepository {
      * the form's own option fields (EPG/DNS/auto-refresh) always win because the form shows them.
      */
     internal fun editFromForm(oldId: String, input: XtreamFormInput, onResult: (Boolean) -> Unit) {
+        // A file playlist edit keeps its id (so its local copy + saved data carry over); a re-pick just
+        // overwrites the copy. Route through the same add-file path with the existing id.
+        if (input.sourceType == SOURCE_TYPE_M3U_FILE) {
+            addFileFromForm(input, existingId = oldId, onResult = onResult)
+            return
+        }
         val candidate = if (input.sourceType == SOURCE_TYPE_M3U_URL) m3uAccountFromForm(input) else xtreamAccountFromForm(input)
         verifyAndReplace(
             oldId,
@@ -225,8 +275,12 @@ object XtreamRepository {
     fun remove(id: String) {
         val removed = _uiState.value.accounts.firstOrNull { it.id == id }
         _uiState.update { it.copy(accounts = it.accounts.filterNot { acc -> acc.id == id }) }
-        // Free the parsed catalog rows for a removed M3U playlist (can be hundreds of MB of DB).
-        if (removed?.sourceType == SOURCE_TYPE_M3U_URL) scope.launch { M3UClient.clear(removed) }
+        // Free the parsed catalog rows + EPG for a removed M3U playlist (can be hundreds of MB of DB),
+        // and drop a file playlist's saved local copy.
+        if (removed != null && removed.sourceType.isM3u()) scope.launch {
+            M3UClient.clear(removed)
+            if (removed.sourceType == SOURCE_TYPE_M3U_FILE) deleteM3UFile(removed.id)
+        }
         persist()
     }
 

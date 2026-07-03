@@ -160,9 +160,12 @@ data class XtreamAccount(
     val username: String,
     val password: String,
     val enabled: Boolean = true,
-    val sourceType: String = "xtream",                        // xtream | m3u_url | m3u_file | stalker (P1: xtream only)
+    val sourceType: String = "xtream",                        // xtream | m3u_url | m3u_file | stalker
     val epgUrl: String? = null,                               // custom XMLTV override (P2 uses it; synced now)
     val userAgent: String? = null,                            // optional per-playlist UA (M3U URL fetch; P2)
+    // The picked document's display name for a m3u_file playlist. Synced (spec §3.2) so another device
+    // knows the playlist exists + can prompt a re-import; the FILE BYTES are NOT synced (local only).
+    val fileName: String? = null,
     val dnsProvider: String = "system",                       // system|cloudflare|google|mullvad|quad9|dnssb (P3)
     val autoRefreshHours: Int = 24,                           // 0 = off; 24 = default (P3 uses it)
     val contentTypes: Set<String> = ALL_CONTENT_TYPES,

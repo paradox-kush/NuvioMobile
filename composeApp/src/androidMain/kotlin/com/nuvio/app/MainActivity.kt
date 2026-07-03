@@ -69,6 +69,7 @@ class MainActivity : AppCompatActivity() {
         window.setBackgroundDrawableResource(R.color.nuvio_background)
         AddonStorage.initialize(applicationContext)
         com.nuvio.app.features.iptv.XtreamAccountStorage.initialize(applicationContext)
+        com.nuvio.app.features.iptv.M3UFilePicker.initialize(applicationContext)
         com.nuvio.app.features.iptv.match.MatchDbDriver.initialize(applicationContext)
         com.nuvio.app.features.iptv.content.IptvContentDbDriver.initialize(applicationContext)
         AuthStorage.initialize(applicationContext)
@@ -114,6 +115,9 @@ class MainActivity : AppCompatActivity() {
         PlatformLocalAccountDataCleaner.initialize(applicationContext)
         EpisodeReleaseNotificationPlatform.initialize(applicationContext)
         EpisodeReleaseNotificationPlatform.bindActivity(this)
+        // Register the ACTION_OPEN_DOCUMENT launcher for the IPTV M3U-file picker (must happen before
+        // the activity is STARTED, i.e. here in onCreate).
+        com.nuvio.app.features.iptv.M3UFilePicker.bindActivity(this)
         handleIncomingAppIntent(intent)
 
         setContent {

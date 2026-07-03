@@ -76,16 +76,21 @@ internal data class XtreamFormInput(
     val sourceType: String = SOURCE_TYPE_XTREAM,
     val m3uUrl: String = "",
     val userAgent: String? = null,
+    // M3U-FILE source (sourceType = m3u_file): the picked document (name + a bytes provider). The
+    // fileName is remembered for a synced/re-import affordance; pickedFile is null in edit mode when
+    // the user didn't re-pick (the existing local copy is reused).
+    val fileName: String? = null,
+    val pickedFile: PickedM3UFile? = null,
 )
 
 /**
- * The four playlist source types from the reference design. [XTREAM] and [URL] (M3U) are functional
- * (P1/P2); [FILE]/[STALKER] render with a "Soon" badge and can't be selected. Flip [enabled] per
- * phase as each source type's field-set + parsing lands (FILE = later P2, STALKER = P4).
+ * The four playlist source types from the reference design. [XTREAM], [URL] (M3U) and [FILE] (local
+ * M3U) are functional (P1/P2); [STALKER] renders with a "Soon" badge and can't be selected. Flip
+ * [enabled] per phase as each source type's field-set + parsing lands (STALKER = P4).
  */
 internal enum class XtreamSourceType(val label: String, val enabled: Boolean) {
     URL("URL", enabled = true),
-    FILE("File", enabled = false),
+    FILE("File", enabled = true),
     XTREAM("Xtream", enabled = true),
     STALKER("Stalker", enabled = false),
 }
@@ -130,11 +135,18 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
         val editing = XtreamAddPage.editId?.let { id -> state.accounts.firstOrNull { it.id == id } }
 
         // Prefilled once per target playlist (add mode -> blank). Fields are plain remembered state.
-        val editingIsM3u = editing?.sourceType == SOURCE_TYPE_M3U_URL
+        val editingIsM3uUrl = editing?.sourceType == SOURCE_TYPE_M3U_URL
+        val editingIsM3uFile = editing?.sourceType == SOURCE_TYPE_M3U_FILE
         var sourceType by remember(editing?.id) {
-            mutableStateOf(if (editingIsM3u) XtreamSourceType.URL else XtreamSourceType.XTREAM)
+            mutableStateOf(
+                when {
+                    editingIsM3uUrl -> XtreamSourceType.URL
+                    editingIsM3uFile -> XtreamSourceType.FILE
+                    else -> XtreamSourceType.XTREAM
+                }
+            )
         }
-        var server by remember(editing?.id) { mutableStateOf(if (editingIsM3u) "" else editing?.baseUrl ?: "") }
+        var server by remember(editing?.id) { mutableStateOf(if (editingIsM3uUrl || editingIsM3uFile) "" else editing?.baseUrl ?: "") }
         var username by remember(editing?.id) { mutableStateOf(editing?.username ?: "") }
         var password by remember(editing?.id) { mutableStateOf(editing?.password ?: "") }
         var name by remember(editing?.id) { mutableStateOf(editing?.name ?: "") }
@@ -142,8 +154,14 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
         var dnsProvider by remember(editing?.id) { mutableStateOf(editing?.dnsProvider ?: "system") }
         var autoRefreshHours by remember(editing?.id) { mutableStateOf(editing?.autoRefreshHours ?: 24) }
         // M3U-URL source fields (baseUrl carries the M3U URL for m3u_url accounts).
-        var m3uUrl by remember(editing?.id) { mutableStateOf(if (editingIsM3u) editing?.baseUrl ?: "" else "") }
+        var m3uUrl by remember(editing?.id) { mutableStateOf(if (editingIsM3uUrl) editing?.baseUrl ?: "" else "") }
         var userAgent by remember(editing?.id) { mutableStateOf(editing?.userAgent ?: "") }
+        // M3U-FILE source: the picked document (null until a pick) + the display file name (prefilled
+        // from the edited account so its "re-import" state and name survive without a new pick).
+        var pickedFile by remember(editing?.id) { mutableStateOf<PickedM3UFile?>(null) }
+        var pickedFileName by remember(editing?.id) { mutableStateOf(editing?.fileName) }
+        // A file playlist synced from another device has a fileName but no local copy here.
+        val fileMissingOnThisDevice = editingIsM3uFile && editing != null && !M3UFileStore.hasLocalCopy(editing)
 
         SourceTypeSection(
             isTablet = isTablet,
@@ -184,8 +202,25 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
                 name = name,
                 onNameChange = { name = it },
             )
-            // File / Stalker field-sets are later-P2 / P4 — those tiles stay disabled so their
-            // branches are never reached. TODO(playlist-manager): Stalker portal + MAC; File picker.
+            XtreamSourceType.FILE -> M3UFileFieldsSection(
+                isTablet = isTablet,
+                pickedFileName = pickedFileName,
+                fileMissingOnThisDevice = fileMissingOnThisDevice && pickedFile == null,
+                onChooseFile = {
+                    pickM3UFile { picked ->
+                        if (picked != null) {
+                            pickedFile = picked
+                            pickedFileName = picked.fileName
+                            if (name.isBlank()) name = picked.fileName.substringBeforeLast('.')
+                        }
+                    }
+                },
+                userAgent = userAgent,
+                onUserAgentChange = { userAgent = it },
+                name = name,
+                onNameChange = { name = it },
+            )
+            // Stalker field-set is P4 — that tile stays disabled so this branch is never reached.
             else -> Unit
         }
 
@@ -213,9 +248,16 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
             isEdit = XtreamAddPage.isEdit,
             canSave = sourceType.enabled && when (sourceType) {
                 XtreamSourceType.URL -> m3uUrl.isNotBlank()
+                // A file playlist can save when a new file was picked, OR (edit) an on-device copy exists.
+                XtreamSourceType.FILE -> pickedFile != null || (editingIsM3uFile && !fileMissingOnThisDevice)
                 else -> server.isNotBlank() && username.isNotBlank() && password.isNotBlank()
             },
             onSave = {
+                val resolvedSourceType = when (sourceType) {
+                    XtreamSourceType.URL -> SOURCE_TYPE_M3U_URL
+                    XtreamSourceType.FILE -> SOURCE_TYPE_M3U_FILE
+                    else -> SOURCE_TYPE_XTREAM
+                }
                 val input = XtreamFormInput(
                     serverUrl = server,
                     username = username,
@@ -224,9 +266,11 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
                     epgUrl = epgUrl.trim().ifEmpty { null },
                     dnsProvider = dnsProvider,
                     autoRefreshHours = autoRefreshHours,
-                    sourceType = if (sourceType == XtreamSourceType.URL) SOURCE_TYPE_M3U_URL else SOURCE_TYPE_XTREAM,
+                    sourceType = resolvedSourceType,
                     m3uUrl = m3uUrl,
                     userAgent = userAgent.trim().ifEmpty { null },
+                    fileName = pickedFileName,
+                    pickedFile = pickedFile,
                 )
                 val editId = XtreamAddPage.editId
                 if (editId != null) {
@@ -365,6 +409,62 @@ private fun M3UFieldsSection(
             )
             Text(
                 text = "The playlist is downloaded and indexed on save. Large playlists can take a moment.",
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.colors.textMuted,
+            )
+        }
+    }
+}
+
+@Composable
+private fun M3UFileFieldsSection(
+    isTablet: Boolean,
+    pickedFileName: String?,
+    fileMissingOnThisDevice: Boolean,
+    onChooseFile: () -> Unit,
+    userAgent: String,
+    onUserAgentChange: (String) -> Unit,
+    name: String,
+    onNameChange: (String) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    SettingsSection(title = "M3U File", isTablet = isTablet) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = NuvioTokens.Space.s2),
+            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
+        ) {
+            NuvioPrimaryButton(
+                text = if (pickedFileName != null) "Choose a different file" else "Choose file",
+                onClick = onChooseFile,
+            )
+            when {
+                fileMissingOnThisDevice -> Text(
+                    // A file playlist synced from another device: fileName is known but the bytes aren't here.
+                    text = "“${pickedFileName ?: "This playlist"}” was added on another device. Choose the file again to import it here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.danger,
+                )
+                pickedFileName != null -> Text(
+                    text = "Selected: $pickedFileName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.colors.textSecondary,
+                )
+            }
+            FormOutlinedField(
+                value = userAgent,
+                onValueChange = onUserAgentChange,
+                label = "User-Agent (optional)",
+                placeholder = "e.g. VLC/3.0.20 LibVLC/3.0.20",
+            )
+            FormOutlinedField(
+                value = name,
+                onValueChange = onNameChange,
+                label = "Name (optional)",
+            )
+            Text(
+                text = "The file is copied into the app and indexed on save, so the original can be moved or deleted. File contents are not synced across devices.",
                 style = MaterialTheme.typography.bodySmall,
                 color = tokens.colors.textMuted,
             )

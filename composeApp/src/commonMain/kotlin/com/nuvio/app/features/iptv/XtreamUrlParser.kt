@@ -103,3 +103,40 @@ internal fun m3uAccountFromForm(input: XtreamFormInput): XtreamAccount? {
         userAgent = input.userAgent?.trim()?.takeIf { it.isNotEmpty() },
     )
 }
+
+/**
+ * Builds an M3U-FILE playlist account from the "Add Playlist" form. The local file IS the source —
+ * there's no URL — so baseUrl stays empty (the ingest reads `filesDir/playlists/{id}.m3u`). The id
+ * must be stable per playlist: [existingId] is reused when editing (so the same local copy + saved
+ * data carry over), else a fresh unique id is minted from the file name + [uniqueSuffix] (a clock ms).
+ * Returns null when there's no file name to key off (no pick made, not editing). internal for tests.
+ */
+internal fun m3uFileAccountFromForm(
+    input: XtreamFormInput,
+    existingId: String? = null,
+    uniqueSuffix: Long = 0,
+): XtreamAccount? {
+    val fileName = input.fileName?.trim()?.takeIf { it.isNotEmpty() }
+        ?: return existingId?.let { id ->
+            // Editing options with no re-pick and no name: keep the id but we still need SOME name.
+            m3uFileAccount(id, "Playlist", input)
+        }
+    val id = existingId ?: "m3u_file|${fileName}|$uniqueSuffix"
+    val displayName = input.name?.trim()?.takeIf { it.isNotEmpty() } ?: fileName.substringBeforeLast('.')
+    return m3uFileAccount(id, displayName, input, fileName)
+}
+
+private fun m3uFileAccount(id: String, name: String, input: XtreamFormInput, fileName: String? = null): XtreamAccount =
+    XtreamAccount(
+        id = id,
+        name = name,
+        baseUrl = "",                     // no URL — the local file copy is the source
+        username = "",
+        password = "",
+        sourceType = SOURCE_TYPE_M3U_FILE,
+        epgUrl = input.epgUrl?.trim()?.takeIf { it.isNotEmpty() },
+        dnsProvider = input.dnsProvider,
+        autoRefreshHours = input.autoRefreshHours,
+        userAgent = input.userAgent?.trim()?.takeIf { it.isNotEmpty() },
+        fileName = fileName,
+    )

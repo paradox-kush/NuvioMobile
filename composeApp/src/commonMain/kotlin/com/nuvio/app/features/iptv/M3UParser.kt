@@ -39,12 +39,22 @@ object M3UParser {
     class StreamingParser(private val onEntry: (Entry) -> Unit) {
         private var pendingExtInf: String? = null
 
+        /**
+         * The playlist's EPG URL declared on the `#EXTM3U` header (`url-tvg` or `x-tvg-url`), captured
+         * as the header streams past. Null until the header is seen (or if it carries no tvg url). The
+         * ingest reads this AFTER the stream completes to persist the EPG source. Only the FIRST value
+         * wins (some playlists repeat the header).
+         */
+        var epgUrl: String? = null
+            private set
+
         fun onLine(raw: String) {
             val line = raw.trim()
             if (line.isEmpty()) return
             when {
+                line.startsWith("#EXTM3U", ignoreCase = true) -> captureHeaderEpgUrl(line)
                 line.startsWith("#EXTINF", ignoreCase = true) -> pendingExtInf = line
-                line.startsWith("#") -> Unit // #EXTM3U, #EXTGRP, #KODIPROP, etc. — ignored
+                line.startsWith("#") -> Unit // #EXTGRP, #KODIPROP, etc. — ignored
                 else -> {
                     val ext = pendingExtInf
                     if (ext != null) {
@@ -53,6 +63,36 @@ object M3UParser {
                     }
                     // A bare URL with no preceding #EXTINF is skipped (can't classify/name it well).
                 }
+            }
+        }
+
+        private fun captureHeaderEpgUrl(headerLine: String) {
+            if (epgUrl != null) return
+            // Read the header's tvg-url attribute DIRECTLY (not via parseAttributes, which truncates at
+            // the first ',' — and a url-tvg value is often a comma-separated list). Providers use either
+            // spelling; the first URL in a list wins.
+            val raw = quotedHeaderAttr(headerLine, "url-tvg")
+                ?: quotedHeaderAttr(headerLine, "x-tvg-url")
+                ?: quotedHeaderAttr(headerLine, "tvg-url")
+                ?: return
+            epgUrl = raw.split(',').firstOrNull { it.isNotBlank() }?.trim()?.takeIf { it.isNotBlank() }
+        }
+
+        /** Reads `name="…"` from the #EXTM3U header, allowing commas inside the quoted value. */
+        private fun quotedHeaderAttr(line: String, name: String): String? {
+            val key = "$name="
+            var from = 0
+            while (true) {
+                val idx = line.indexOf(key, from, ignoreCase = true)
+                if (idx < 0) return null
+                val before = if (idx == 0) ' ' else line[idx - 1]
+                val q = idx + key.length
+                if ((before == ' ' || before == '\t' || idx == 0) && q < line.length && line[q] == '"') {
+                    val close = line.indexOf('"', q + 1)
+                    if (close > q) return line.substring(q + 1, close)
+                    return null
+                }
+                from = idx + key.length
             }
         }
     }

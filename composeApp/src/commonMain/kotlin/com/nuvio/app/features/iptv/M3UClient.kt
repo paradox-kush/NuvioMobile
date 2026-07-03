@@ -2,6 +2,7 @@ package com.nuvio.app.features.iptv
 
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.addons.httpStreamLines
+import com.nuvio.app.features.iptv.epg.XmltvClient
 import com.nuvio.app.features.iptv.content.IngestMeta
 import com.nuvio.app.features.iptv.content.IptvCategoryRow
 import com.nuvio.app.features.iptv.content.IptvContentDb
@@ -68,24 +69,43 @@ object M3UClient : IptvClient {
      */
     internal suspend fun ingest(acc: XtreamAccount): Result<IngestMeta> = runCatching {
         val url = acc.baseUrl
-        require(url.isNotBlank()) { "M3U playlist URL is blank" }
+        // A file playlist has no URL (its bytes are the saved local copy); a URL playlist must have one.
+        if (acc.sourceType != SOURCE_TYPE_M3U_FILE) require(url.isNotBlank()) { "M3U playlist URL is blank" }
         IptvContentDb.beginIngest(acc.id)
 
         val collector = IngestCollector(acc.id)
         val parser = M3UParser.StreamingParser { entry -> collector.add(entry) }
 
         var lineCount = 0
-        httpStreamLines(url, acc.userAgent()) { line ->
+        streamLines(acc, url) { line ->
             parser.onLine(line)
             lineCount++
         }
         collector.finish()
 
-        IptvContentDb.finishIngest(acc.id, collector.liveCount, collector.vodCount, collector.seriesCount)
-        val meta = IngestMeta(0, collector.liveCount, collector.vodCount, collector.seriesCount)
-        log.i { "M3U ingest done acc=${acc.id} lines=$lineCount live=${collector.liveCount} vod=${collector.vodCount} series=${collector.seriesCount} episodes=${collector.episodeCount}" }
+        // Capture the playlist's declared EPG url (#EXTM3U url-tvg) so XmltvClient can resolve a guide
+        // when the account has no explicit epgUrl. Persisted on the meta row alongside the counts.
+        val headerEpgUrl = parser.epgUrl
+        IptvContentDb.finishIngest(acc.id, collector.liveCount, collector.vodCount, collector.seriesCount, headerEpgUrl)
+        val meta = IngestMeta(0, collector.liveCount, collector.vodCount, collector.seriesCount, headerEpgUrl)
+        log.i { "M3U ingest done acc=${acc.id} lines=$lineCount live=${collector.liveCount} vod=${collector.vodCount} series=${collector.seriesCount} episodes=${collector.episodeCount} epgUrl=$headerEpgUrl" }
         meta
     }.onFailure { log.w(it) { "M3U ingest failed for ${acc.id}" } }
+
+    /**
+     * The byte source for an ingest: an http(s) URL streams over the network; a `m3u_file` playlist
+     * reads the local copy saved under app storage. Both are gzip-aware and bounded-memory.
+     */
+    private suspend fun streamLines(acc: XtreamAccount, url: String, onLine: (String) -> Unit) {
+        if (acc.sourceType == SOURCE_TYPE_M3U_FILE) {
+            val path = M3UFileStore.localPath(acc)
+                ?: error("Playlist file for '${acc.name}' isn't on this device — re-import it here.")
+            if (!fileExists(path)) error("Playlist file for '${acc.name}' is missing — re-import it on this device.")
+            streamFileLines(path, onLine)
+        } else {
+            httpStreamLines(url, acc.userAgent(), onLine)
+        }
+    }
 
     /**
      * Accumulates parsed entries into per-kind chunk buffers and flushes to the DB every [CHUNK]
@@ -189,9 +209,18 @@ object M3UClient : IptvClient {
         IptvContentDb.seriesFor(acc.id, categoryId).map { it.toSeriesItem() }
     }
 
-    /** No EPG for M3U in P2 (XMLTV lands in P2c). */
-    override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> =
-        Result.success(emptyList())
+    /**
+     * now/next for an M3U live channel, from the XMLTV guide (P2b). The channel's tvg-id (stored on its
+     * row) is the XMLTV key; with no tvg-id there's nothing to match, so it's empty. The guide is fetched
+     * lazily+cached by [XmltvClient.ensureEpg]; here we just read what's stored (a cheap indexed range).
+     */
+    override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = runCatching {
+        val tvgId = IptvContentDb.channelRow(acc.id, streamId)?.tvgId?.takeIf { it.isNotBlank() }
+            ?: return@runCatching emptyList()
+        // Kick a background guide refresh if none/stale (no-op when fresh or no EPG source), then read.
+        XmltvClient.ensureEpg(acc)
+        XmltvClient.nowNext(acc, tvgId, limit)
+    }
 
     /** M3U carries no rich detail — surface just the stored name; enrichment (TMDB) still applies upstream. */
     override suspend fun vodInfo(acc: XtreamAccount, vodId: Int): Result<XtreamVodDetail?> = runCatching {

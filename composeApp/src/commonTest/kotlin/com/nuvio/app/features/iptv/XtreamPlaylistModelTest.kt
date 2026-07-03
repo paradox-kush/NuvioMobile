@@ -281,6 +281,96 @@ class XtreamPlaylistModelTest {
     }
 
     @Test
+    fun m3uFileAccountFromFormBuildsFileIdentity() {
+        val account = m3uFileAccountFromForm(
+            XtreamFormInput(
+                serverUrl = "", username = "", password = "", name = "  Movie Night  ",
+                epgUrl = "  http://epg.example/guide.xml  ", dnsProvider = "system", autoRefreshHours = 24,
+                sourceType = SOURCE_TYPE_M3U_FILE,
+                fileName = "movies.m3u",
+                userAgent = "  UA  ",
+            ),
+            existingId = null,
+            uniqueSuffix = 1719900000000L,
+        )!!
+        assertEquals(SOURCE_TYPE_M3U_FILE, account.sourceType)
+        assertEquals("m3u_file|movies.m3u|1719900000000", account.id)   // stable id from name + suffix
+        assertEquals("", account.baseUrl)                              // no URL — local file is the source
+        assertEquals("Movie Night", account.name)                     // trimmed
+        assertEquals("movies.m3u", account.fileName)                  // persisted for re-import affordance
+        assertEquals("http://epg.example/guide.xml", account.epgUrl)  // trimmed
+        assertEquals("UA", account.userAgent)                         // trimmed
+        assertEquals("", account.username)
+        assertEquals("", account.password)
+    }
+
+    @Test
+    fun m3uFileAccountFromFormNameDefaultsToFileStem_andEditKeepsId() {
+        // No explicit name -> the file stem (no extension) becomes the display name.
+        val added = m3uFileAccountFromForm(
+            XtreamFormInput(serverUrl = "", username = "", password = "", name = null, epgUrl = null, dnsProvider = "system", autoRefreshHours = 24, sourceType = SOURCE_TYPE_M3U_FILE, fileName = "My Playlist.m3u8"),
+            existingId = null,
+            uniqueSuffix = 42L,
+        )!!
+        assertEquals("My Playlist", added.name)
+        assertEquals("m3u_file|My Playlist.m3u8|42", added.id)
+
+        // Editing (re-pick) keeps the SAME id so the local copy + saved data carry over.
+        val edited = m3uFileAccountFromForm(
+            XtreamFormInput(serverUrl = "", username = "", password = "", name = "Renamed", epgUrl = null, dnsProvider = "system", autoRefreshHours = 24, sourceType = SOURCE_TYPE_M3U_FILE, fileName = "different.m3u"),
+            existingId = "m3u_file|My Playlist.m3u8|42",
+            uniqueSuffix = 999L,   // ignored because existingId wins
+        )!!
+        assertEquals("m3u_file|My Playlist.m3u8|42", edited.id)
+        assertEquals("Renamed", edited.name)
+        assertEquals("different.m3u", edited.fileName)
+
+        // No file name and not editing -> no account (nothing to key off / import).
+        assertNull(
+            m3uFileAccountFromForm(
+                XtreamFormInput(serverUrl = "", username = "", password = "", name = null, epgUrl = null, dnsProvider = "system", autoRefreshHours = 24, sourceType = SOURCE_TYPE_M3U_FILE, fileName = null),
+                existingId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun fileNameFieldRoundTripsThroughJson_andLegacyDecodesNull() {
+        val account = m3uFileAccountFromForm(
+            XtreamFormInput(serverUrl = "", username = "", password = "", name = "F", epgUrl = null, dnsProvider = "system", autoRefreshHours = 24, sourceType = SOURCE_TYPE_M3U_FILE, fileName = "list.m3u"),
+            existingId = null, uniqueSuffix = 1L,
+        )!!
+        val decoded = json.decodeFromString<List<XtreamAccount>>(json.encodeToString(listOf(account))).single()
+        assertEquals(account, decoded)
+        assertEquals("list.m3u", decoded.fileName)
+
+        // Pre-fileName persisted JSON decodes with fileName = null (additive, no migration).
+        val legacy = """[{"id":"http://h:80|u","name":"P","baseUrl":"http://h:80","username":"u","password":"p"}]"""
+        assertNull(json.decodeFromString<List<XtreamAccount>>(legacy).single().fileName)
+    }
+
+    @Test
+    fun isM3uCoversBothUrlAndFileSources() {
+        assertTrue(SOURCE_TYPE_M3U_URL.isM3u())
+        assertTrue(SOURCE_TYPE_M3U_FILE.isM3u())
+        assertFalse(SOURCE_TYPE_XTREAM.isM3u())
+        assertFalse("stalker".isM3u())
+    }
+
+    @Test
+    fun fileSourcePlaylistsAreNotSyncPushed() {
+        // Sync is scoped to xtream rows (p_source_types ['xtream']); a file playlist's bytes aren't
+        // synced (spec §3.2). The push payload still only carries xtream identity, so a file row that
+        // slipped in serializes its source_type as-is but is filtered server-side by the scope.
+        val fileAcc = m3uFileAccountFromForm(
+            XtreamFormInput(serverUrl = "", username = "", password = "", name = "F", epgUrl = null, dnsProvider = "system", autoRefreshHours = 24, sourceType = SOURCE_TYPE_M3U_FILE, fileName = "l.m3u"),
+            existingId = null, uniqueSuffix = 1L,
+        )!!
+        val params = playlistPushParams(profileId = 1, accounts = listOf(fileAcc))
+        assertEquals(listOf("xtream"), params["p_source_types"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    @Test
     fun typeEnabledAndAllowsCategorySemantics() {
         val acc = base.copy(
             contentTypes = setOf(CONTENT_TYPE_LIVE),

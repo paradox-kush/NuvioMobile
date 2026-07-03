@@ -46,7 +46,26 @@ internal data class IptvEpisodeRow(
     val ext: String?,
 )
 
-internal data class IngestMeta(val builtAtMs: Long, val liveCount: Int, val vodCount: Int, val seriesCount: Int)
+internal data class IngestMeta(
+    val builtAtMs: Long,
+    val liveCount: Int,
+    val vodCount: Int,
+    val seriesCount: Int,
+    /** The M3U `url-tvg` / `x-tvg-url` header captured at ingest (EPG source when no explicit epgUrl). */
+    val epgUrl: String? = null,
+)
+
+/** EPG freshness marker for a playlist — non-null once XMLTV has been ingested at least once. */
+internal data class EpgMeta(val builtAtMs: Long, val programmeCount: Int)
+
+/** One EPG programme row (already channel-filtered + UTC-normalized). */
+internal data class EpgProgrammeRow(
+    val channelId: String,
+    val startMs: Long,
+    val endMs: Long,
+    val title: String,
+    val desc: String?,
+)
 
 /**
  * On-disk store for parsed M3U catalogs. One row-set per `playlist_id` (the M3U account id). Mirrors
@@ -83,6 +102,20 @@ internal object IptvContentDb {
         it.execSQL("CREATE INDEX IF NOT EXISTS episodes_series ON episodes(playlist_id, series_sid)")
         it.execSQL("CREATE TABLE IF NOT EXISTS categories(playlist_id TEXT NOT NULL, type TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(playlist_id, type, id)) WITHOUT ROWID")
         it.execSQL("CREATE TABLE IF NOT EXISTS ingest_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, live_count INTEGER NOT NULL, vod_count INTEGER NOT NULL, series_count INTEGER NOT NULL) WITHOUT ROWID")
+        // v2 (P2 XMLTV EPG): programme rows per playlist+channel, plus the M3U `url-tvg` captured at
+        // ingest (stored on ingest_meta as an additive column so existing rows keep their old shape).
+        if (version < 2) {
+            it.execSQL("DROP TABLE IF EXISTS epg_programmes")
+            it.execSQL("DROP TABLE IF EXISTS epg_meta")
+            // Add the column to any pre-v2 ingest_meta row-set; ignore if it already exists.
+            runCatching { it.execSQL("ALTER TABLE ingest_meta ADD COLUMN epg_url TEXT") }
+            it.execSQL("PRAGMA user_version = 2")
+        }
+        it.execSQL("CREATE TABLE IF NOT EXISTS epg_programmes(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT)")
+        it.execSQL("CREATE INDEX IF NOT EXISTS epg_lookup ON epg_programmes(playlist_id, channel_id, start_ms)")
+        // Per-playlist EPG freshness marker (kept separate from the catalog's ingest_meta so an EPG
+        // refresh doesn't touch the catalog row, and vice-versa).
+        it.execSQL("CREATE TABLE IF NOT EXISTS epg_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, programme_count INTEGER NOT NULL) WITHOUT ROWID")
         conn = it
     }
 
@@ -90,9 +123,15 @@ internal object IptvContentDb {
 
     /** Non-null when a playlist has a completed ingest — the "already ingested" gate. */
     suspend fun ingestMeta(playlistId: String): IngestMeta? = mutex.withLock {
-        connection().prepare("SELECT built_at, live_count, vod_count, series_count FROM ingest_meta WHERE playlist_id = ?").use { st ->
+        connection().prepare("SELECT built_at, live_count, vod_count, series_count, epg_url FROM ingest_meta WHERE playlist_id = ?").use { st ->
             st.bindText(1, playlistId)
-            if (st.step()) IngestMeta(st.getLong(0), st.getLong(1).toInt(), st.getLong(2).toInt(), st.getLong(3).toInt()) else null
+            if (st.step()) IngestMeta(
+                builtAtMs = st.getLong(0),
+                liveCount = st.getLong(1).toInt(),
+                vodCount = st.getLong(2).toInt(),
+                seriesCount = st.getLong(3).toInt(),
+                epgUrl = if (st.isNull(4)) null else st.getText(4),
+            ) else null
         }
     }
 
@@ -106,7 +145,7 @@ internal object IptvContentDb {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
-            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta")) {
+            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_meta")) {
                 c.prepare("DELETE FROM $table WHERE playlist_id = ?").use { st -> st.bindText(1, playlistId); st.step() }
             }
             c.execSQL("COMMIT")
@@ -189,12 +228,106 @@ internal object IptvContentDb {
         }
     }
 
-    /** Writes the meta row LAST — its presence is the "ingest complete" signal. */
-    suspend fun finishIngest(playlistId: String, liveCount: Int, vodCount: Int, seriesCount: Int) = mutex.withLock {
-        connection().prepare("INSERT OR REPLACE INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count) VALUES(?,?,?,?,?)").use { st ->
+    /** Writes the meta row LAST — its presence is the "ingest complete" signal. [epgUrl] = the M3U `url-tvg`. */
+    suspend fun finishIngest(playlistId: String, liveCount: Int, vodCount: Int, seriesCount: Int, epgUrl: String? = null) = mutex.withLock {
+        connection().prepare("INSERT OR REPLACE INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count, epg_url) VALUES(?,?,?,?,?,?)").use { st ->
             st.bindText(1, playlistId); st.bindLong(2, now())
             st.bindLong(3, liveCount.toLong()); st.bindLong(4, vodCount.toLong()); st.bindLong(5, seriesCount.toLong())
+            if (epgUrl != null) st.bindText(6, epgUrl) else st.bindNull(6)
             st.step()
+        }
+    }
+
+    // --- EPG (XMLTV) -------------------------------------------------------------
+
+    /** EPG freshness marker — non-null once XMLTV was ingested for this playlist. */
+    suspend fun epgMeta(playlistId: String): EpgMeta? = mutex.withLock {
+        connection().prepare("SELECT built_at, programme_count FROM epg_meta WHERE playlist_id = ?").use { st ->
+            st.bindText(1, playlistId)
+            if (st.step()) EpgMeta(st.getLong(0), st.getLong(1).toInt()) else null
+        }
+    }
+
+    /**
+     * The distinct, non-blank tvg-ids of a playlist's live channels — the allow-set the XMLTV parse
+     * filters programmes against (so a 50-100 MB guide only stores rows for channels we actually have).
+     */
+    suspend fun distinctTvgIds(playlistId: String): List<String> = mutex.withLock {
+        connection().prepare("SELECT DISTINCT tvg_id FROM channels WHERE playlist_id = ? AND tvg_id IS NOT NULL AND tvg_id <> ''").use { st ->
+            st.bindText(1, playlistId)
+            val out = ArrayList<String>()
+            while (st.step()) if (!st.isNull(0)) out.add(st.getText(0))
+            out
+        }
+    }
+
+    /** Wipes any prior EPG rows for a playlist. Call once before streaming [insertEpgChunk] calls. */
+    suspend fun beginEpg(playlistId: String) = mutex.withLock {
+        val c = connection()
+        c.execSQL("BEGIN IMMEDIATE")
+        try {
+            for (table in listOf("epg_programmes", "epg_meta")) {
+                c.prepare("DELETE FROM $table WHERE playlist_id = ?").use { st -> st.bindText(1, playlistId); st.step() }
+            }
+            c.execSQL("COMMIT")
+        } catch (t: Throwable) {
+            c.execSQL("ROLLBACK"); throw t
+        }
+    }
+
+    /** Inserts one bounded batch of EPG programmes (caller flushes every ~5k to keep RAM flat). */
+    suspend fun insertEpgChunk(playlistId: String, programmes: List<EpgProgrammeRow>) = mutex.withLock {
+        if (programmes.isEmpty()) return@withLock
+        val c = connection()
+        c.execSQL("BEGIN IMMEDIATE")
+        try {
+            c.prepare("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc) VALUES(?,?,?,?,?,?)").use { st ->
+                for (r in programmes) {
+                    st.reset()
+                    st.bindText(1, playlistId); st.bindText(2, r.channelId)
+                    st.bindLong(3, r.startMs); st.bindLong(4, r.endMs)
+                    st.bindText(5, r.title)
+                    if (r.desc != null) st.bindText(6, r.desc) else st.bindNull(6)
+                    st.step()
+                }
+            }
+            c.execSQL("COMMIT")
+        } catch (t: Throwable) {
+            c.execSQL("ROLLBACK"); throw t
+        }
+    }
+
+    /** Writes the EPG meta row LAST — its presence is the "EPG ingest complete" signal. */
+    suspend fun finishEpg(playlistId: String, programmeCount: Int) = mutex.withLock {
+        connection().prepare("INSERT OR REPLACE INTO epg_meta(playlist_id, built_at, programme_count) VALUES(?,?,?)").use { st ->
+            st.bindText(1, playlistId); st.bindLong(2, now()); st.bindLong(3, programmeCount.toLong())
+            st.step()
+        }
+    }
+
+    /**
+     * The programmes airing at/after [atMs] for one channel, ordered by start — the caller takes the
+     * first (now) + second (next). A tiny bounded read: the covering index makes it a range scan.
+     */
+    suspend fun epgAround(playlistId: String, channelId: String, atMs: Long, limit: Int): List<EpgProgrammeRow> = mutex.withLock {
+        // Grab the currently-airing programme (start <= now < end) plus the upcoming ones. Union keeps
+        // it a single indexed pass without pulling the channel's whole day.
+        connection().prepare(
+            "SELECT channel_id, start_ms, end_ms, title, desc FROM epg_programmes " +
+                "WHERE playlist_id = ? AND channel_id = ? AND end_ms > ? ORDER BY start_ms LIMIT ?"
+        ).use { st ->
+            st.bindText(1, playlistId); st.bindText(2, channelId); st.bindLong(3, atMs); st.bindLong(4, limit.toLong())
+            val out = ArrayList<EpgProgrammeRow>()
+            while (st.step()) out.add(
+                EpgProgrammeRow(
+                    channelId = st.getText(0),
+                    startMs = st.getLong(1),
+                    endMs = st.getLong(2),
+                    title = st.getText(3),
+                    desc = if (st.isNull(4)) null else st.getText(4),
+                )
+            )
+            out
         }
     }
 
@@ -203,7 +336,7 @@ internal object IptvContentDb {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
-            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta")) {
+            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_meta")) {
                 c.prepare("DELETE FROM $table WHERE playlist_id = ?").use { st -> st.bindText(1, playlistId); st.step() }
             }
             c.execSQL("COMMIT")

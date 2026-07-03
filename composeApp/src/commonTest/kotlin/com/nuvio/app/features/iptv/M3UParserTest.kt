@@ -151,6 +151,33 @@ class M3UParserTest {
     }
 
     @Test
+    fun extm3uHeaderTvgUrlIsCaptured() {
+        // The #EXTM3U header's url-tvg is the EPG source when no explicit epgUrl — captured as it streams.
+        val parser = M3UParser.StreamingParser { }
+        parser.onLine("""#EXTM3U url-tvg="http://epg.example/guide.xml.gz" x-tvg-url="http://other/ignored.xml"""")
+        parser.onLine("""#EXTINF:-1 group-title="X",Ch""")
+        parser.onLine("http://host/live/u/p/1.ts")
+        assertEquals("http://epg.example/guide.xml.gz", parser.epgUrl)
+    }
+
+    @Test
+    fun extm3uHeaderXTvgUrlSpellingAndCommaList() {
+        val p1 = M3UParser.StreamingParser { }
+        p1.onLine("""#EXTM3U x-tvg-url="http://epg.example/x.xml"""")
+        assertEquals("http://epg.example/x.xml", p1.epgUrl)
+
+        // A comma-separated list -> the first url wins.
+        val p2 = M3UParser.StreamingParser { }
+        p2.onLine("""#EXTM3U url-tvg="http://a/1.xml,http://b/2.xml"""")
+        assertEquals("http://a/1.xml", p2.epgUrl)
+
+        // No tvg url on the header -> null.
+        val p3 = M3UParser.StreamingParser { }
+        p3.onLine("#EXTM3U")
+        assertNull(p3.epgUrl)
+    }
+
+    @Test
     fun m3uAccountFromFormBuildsM3uIdentity() {
         val account = m3uAccountFromForm(
             XtreamFormInput(

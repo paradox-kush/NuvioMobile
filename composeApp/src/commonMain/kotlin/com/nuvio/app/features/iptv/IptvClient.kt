@@ -43,9 +43,12 @@ interface IptvClient {
     companion object {
         /** Picks the client for a playlist by its [XtreamAccount.sourceType]. */
         fun forAccount(acc: XtreamAccount): IptvClient =
-            if (acc.sourceType == SOURCE_TYPE_M3U_URL) M3UClient else XtreamClient
+            if (acc.sourceType.isM3u()) M3UClient else XtreamClient
     }
 }
 
 const val SOURCE_TYPE_XTREAM = "xtream"
 const val SOURCE_TYPE_M3U_URL = "m3u_url"
+
+/** Either M3U source type (URL or local file) — both ride [M3UClient] + the parsed content DB. */
+fun String.isM3u(): Boolean = this == SOURCE_TYPE_M3U_URL || this == SOURCE_TYPE_M3U_FILE
