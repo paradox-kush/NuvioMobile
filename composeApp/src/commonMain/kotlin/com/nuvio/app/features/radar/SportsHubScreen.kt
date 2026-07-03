@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.launch
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioPrimaryButton
 import com.nuvio.app.core.ui.NuvioSurfaceCard
@@ -72,6 +73,7 @@ fun SportsHubScreen(
     onPlayChannel: (String) -> Unit,
     onAddPlaylist: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenRecording: (String) -> Unit = {},
 ) {
     val state by RadarRepository.uiState.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { RadarRepository.ensureLoaded() }
@@ -129,6 +131,7 @@ fun SportsHubScreen(
             onPlayChannel = onPlayChannel,
             onAddPlaylist = onAddPlaylist,
             onDismiss = { sheetFixture = null },
+            onOpenRecording = onOpenRecording,
         )
     }
 }
@@ -658,16 +661,23 @@ internal fun MatchChannelsSheet(
     onPlayChannel: (String) -> Unit,
     onAddPlaylist: () -> Unit,
     onDismiss: () -> Unit,
+    onOpenRecording: (String) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val xtreamState by XtreamRepository.uiState.collectAsStateWithLifecycle()
     var matches by remember(fixture) { mutableStateOf<List<RadarChannelMatcher.ChannelMatch>>(emptyList()) }
+    var recordings by remember(fixture) { mutableStateOf<List<RadarChannelMatcher.RecordingHit>>(emptyList()) }
     var matching by remember(fixture) { mutableStateOf(true) }
     val hasPlaylists = xtreamState.accounts.any { it.enabled }
+    val fixtureStarted = (fixture.startEpochMs ?: Long.MAX_VALUE) <= RadarTime.nowMs()
 
     LaunchedEffect(fixture) {
         XtreamRepository.ensureLoaded()
         if (XtreamRepository.uiState.value.accounts.any { it.enabled }) {
+            // Recordings only make sense once the match has started; probe alongside channels.
+            if (fixtureStarted) {
+                launch { recordings = runCatching { RadarChannelMatcher.findRecordings(fixture) }.getOrDefault(emptyList()) }
+            }
             matches = RadarChannelMatcher.match(fixture, league, onPartial = { matches = it })
         }
         matching = false
@@ -694,6 +704,51 @@ internal fun MatchChannelsSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(NuvioTokens.Space.s12))
+            if (recordings.isNotEmpty()) {
+                Text(
+                    "RECORDINGS",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(NuvioTokens.Space.s6))
+                recordings.forEach { rec ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onDismiss()
+                                onOpenRecording(rec.contentId)
+                            }
+                            .padding(vertical = NuvioTokens.Space.s8),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        AsyncImage(
+                            model = rec.poster,
+                            contentDescription = null,
+                            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(NuvioTokens.Space.s6)),
+                        )
+                        Spacer(Modifier.width(NuvioTokens.Space.s12))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                rec.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                rec.playlistName,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Spacer(Modifier.height(NuvioTokens.Space.s8))
+            }
             Text(
                 "CHANNELS",
                 style = MaterialTheme.typography.labelMedium,
@@ -720,7 +775,17 @@ internal fun MatchChannelsSheet(
                 )
                 else -> LazyColumn {
                     items(matches, key = { it.channel.contentId }) { match ->
-                        ChannelMatchRow(match) {
+                        // Started/finished + archived channel -> catch-up Replay of the programme.
+                        val replayId = if (fixtureStarted) RadarChannelMatcher.replayFor(match, fixture) else null
+                        ChannelMatchRow(
+                            match = match,
+                            onReplay = replayId?.let { id ->
+                                {
+                                    onDismiss()
+                                    onPlayChannel(id)
+                                }
+                            },
+                        ) {
                             RadarChannelMatcher.ensurePlayable(match)
                             onDismiss()
                             onPlayChannel(match.channel.contentId)
@@ -741,7 +806,11 @@ internal fun MatchChannelsSheet(
 }
 
 @Composable
-private fun ChannelMatchRow(match: RadarChannelMatcher.ChannelMatch, onPlay: () -> Unit) {
+private fun ChannelMatchRow(
+    match: RadarChannelMatcher.ChannelMatch,
+    onReplay: (() -> Unit)? = null,
+    onPlay: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -775,6 +844,11 @@ private fun ChannelMatchRow(match: RadarChannelMatcher.ChannelMatch, onPlay: () 
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+        if (onReplay != null) {
+            TextButton(onClick = onReplay, contentPadding = PaddingValues(horizontal = NuvioTokens.Space.s8)) {
+                Text("↩ Replay", style = MaterialTheme.typography.labelMedium)
+            }
         }
         Icon(Icons.Filled.PlayArrow, contentDescription = "Play", tint = MaterialTheme.colorScheme.primary)
     }

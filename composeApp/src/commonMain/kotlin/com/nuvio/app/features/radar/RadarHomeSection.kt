@@ -46,6 +46,7 @@ fun RadarHomeSection(
     onPlayChannel: (String) -> Unit,
     onAddPlaylist: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenRecording: (String) -> Unit = {},
 ) {
     val state by RadarRepository.uiState.collectAsStateWithLifecycle()
     val nowMs = RadarTime.nowMs()
@@ -158,6 +159,7 @@ fun RadarHomeSection(
             onPlayChannel = onPlayChannel,
             onAddPlaylist = onAddPlaylist,
             onDismiss = { sheetFixture = null },
+            onOpenRecording = onOpenRecording,
         )
     }
 }

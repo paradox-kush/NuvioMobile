@@ -5,11 +5,15 @@ import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamProgram
 import com.nuvio.app.features.iptv.XtreamRepository
 import com.nuvio.app.features.iptv.XtreamSearchIndex
+import com.nuvio.app.features.iptv.match.MatchKind
+import com.nuvio.app.features.iptv.match.XtreamMatchIndex
+import com.nuvio.app.features.iptv.match.XtreamTmdbResolver
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * "Which of MY channels is showing this match?" — the Sports Centre matcher.
@@ -33,6 +37,16 @@ object RadarChannelMatcher {
         val logo: String?,
         /** Source-specific EPG handle; for Xtream it's the stream id. */
         val streamId: Int,
+        /** Channel offers catch-up (Xtream tv_archive) — enables Replay for past fixtures. */
+        val hasArchive: Boolean = false,
+    )
+
+    /** A provider VOD entry that looks like a recording of the fixture. */
+    data class RecordingHit(
+        val contentId: String,
+        val name: String,
+        val poster: String?,
+        val playlistName: String,
     )
 
     data class ChannelMatch(
@@ -46,6 +60,8 @@ object RadarChannelMatcher {
     private const val EPG_PROBE_CAP = 40
     private const val EPG_CONCURRENCY = 8
     private const val RESULT_CAP = 10
+    private const val RECORDING_CAP = 6
+    private const val INDEX_WAIT_MS = 12_000L
 
     // Channel-name markers of generic sports channels — weak candidates that the EPG stage
     // can confirm even when no league keyword appears in the channel name.
@@ -116,6 +132,7 @@ object RadarChannelMatcher {
                     name = ch.name,
                     logo = ch.logo,
                     streamId = ch.streamId,
+                    hasArchive = ch.hasArchive,
                 )
             }
         }
@@ -125,6 +142,90 @@ object RadarChannelMatcher {
         val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == channel.playlistId }
             ?: return emptyList()
         return XtreamClient.shortEpg(account, channel.streamId, limit = 8).getOrDefault(emptyList())
+    }
+
+    /**
+     * Catch-up Replay for a started/finished fixture on an archived channel: registers a
+     * synthetic live item carrying the timeshift URL and returns its contentId — it then
+     * plays through the exact same live route as everything else (no new plumbing).
+     * Returns null when the channel has no archive or the fixture hasn't started.
+     */
+    fun replayFor(match: ChannelMatch, fixture: RadarFixture): String? {
+        val start = fixture.startEpochMs ?: return null
+        if (!match.channel.hasArchive || start > RadarTime.nowMs()) return null
+        val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == match.channel.playlistId }
+            ?: return null
+        val programme = match.programme
+        val replayStart = programme?.startMs?.takeIf { it > 0 } ?: (start - 15 * 60 * 1000L)
+        val durationMin = (((programme?.endMs ?: 0L) - (programme?.startMs ?: 0L)) / 60_000L)
+            .toInt().takeIf { it in 30..360 } ?: 165
+        val contentId = XtreamItemRegistry.buildId(
+            account.id, com.nuvio.app.features.iptv.XtreamKind.LIVE.slug,
+            "${match.channel.streamId}r${replayStart / 60_000L}",
+        )
+        XtreamItemRegistry.register(
+            com.nuvio.app.features.iptv.XtreamResolvedItem(
+                contentId = contentId,
+                accountId = account.id,
+                kind = com.nuvio.app.features.iptv.XtreamKind.LIVE,
+                name = "${match.channel.name} · Replay",
+                streamUrl = XtreamClient.liveTimeshiftUrl(account, match.channel.streamId, replayStart, durationMin),
+                logo = match.channel.logo,
+                streamType = "live",
+            )
+        )
+        return contentId
+    }
+
+    /**
+     * Provider VOD entries that look like recordings of this fixture ("Spain vs Austria…"),
+     * from the SAME SQLite catalog index the TMDB matcher builds — no new fetches beyond
+     * its lazy first build. Registered so tapping opens the native detail → play pipeline.
+     */
+    suspend fun findRecordings(fixture: RadarFixture): List<RecordingHit> {
+        val start = fixture.startEpochMs ?: return emptyList()
+        if (start > RadarTime.nowMs()) return emptyList()
+        val homeTokens = teamTokens(fixture.home)
+        val awayTokens = teamTokens(fixture.away)
+        val eventTokens = teamTokens(fixture.event)
+        val queries = buildList {
+            homeTokens.firstOrNull()?.let(::add)
+            awayTokens.firstOrNull()?.let(::add)
+            if (isEmpty()) eventTokens.take(2).forEach(::add)
+        }.distinct()
+        if (queries.isEmpty()) return emptyList()
+
+        XtreamRepository.ensureLoaded()
+        val accounts = XtreamRepository.uiState.value.accounts.filter { it.enabled }
+        val hits = LinkedHashMap<String, RecordingHit>()
+        for (account in accounts) {
+            withTimeoutOrNull(INDEX_WAIT_MS) {
+                XtreamTmdbResolver.ensureIndexed(account, MatchKind.MOVIE)
+            }
+            for (q in queries) {
+                XtreamMatchIndex.searchByName(account.id, MatchKind.MOVIE, q, 30).forEach { item ->
+                    val text = normalize(item.name)
+                    val bothTeams = homeTokens.any { hits(text, it) } && awayTokens.any { hits(text, it) }
+                    val eventMatch = eventTokens.isNotEmpty() && eventTokens.count { hits(text, it) } >= 2
+                    if (!bothTeams && !eventMatch) return@forEach
+                    val movie = com.nuvio.app.features.iptv.XtreamMovie(
+                        streamId = item.sid,
+                        name = item.name,
+                        poster = item.poster,
+                        categoryId = null,
+                        rating = null,
+                        streamUrl = XtreamClient.movieStreamUrl(account, item.sid, item.ext ?: "mp4"),
+                        tmdb = item.tmdb,
+                        containerExtension = item.ext,
+                    )
+                    XtreamItemRegistry.registerMovie(account.id, movie)
+                    val contentId = XtreamItemRegistry.vodId(account.id, item.sid)
+                    hits.getOrPut(contentId) { RecordingHit(contentId, item.name, item.poster, account.name) }
+                }
+            }
+            if (hits.size >= RECORDING_CAP) break
+        }
+        return hits.values.take(RECORDING_CAP)
     }
 
     /** Registers the match's channel so the play route can resolve its stream URL. */

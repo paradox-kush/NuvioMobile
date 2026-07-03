@@ -34,6 +34,7 @@ import com.nuvio.app.features.radar.SportsHubScreen
 import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamLiveRecents
 import com.nuvio.app.features.iptv.XtreamRepository
+import com.nuvio.app.features.iptv.toMetaPreview
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -3210,6 +3211,10 @@ private fun AppTabHost(
                         // as the IPTV hub; the no-playlist CTA deep-links to IPTV settings.
                         onPlayChannel = onPlayLiveChannel,
                         onAddPlaylist = onIptvAddProvider,
+                        // Recordings are registry-registered VOD ids — native detail pipeline.
+                        onOpenRecording = { id ->
+                            XtreamItemRegistry.get(id)?.toMetaPreview()?.let { onPosterClick?.invoke(it) }
+                        },
                     )
                 }
 

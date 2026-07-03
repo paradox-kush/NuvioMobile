@@ -778,6 +778,9 @@ fun HomeScreen(
                     onOpenSportsTab = onOpenSportsTab,
                     onPlayChannel = onPlaySportsChannel,
                     onAddPlaylist = onAddIptvPlaylist,
+                    onOpenRecording = { id ->
+                        XtreamItemRegistry.get(id)?.toMetaPreview()?.let { onPosterClick?.invoke(it) }
+                    },
                 )
             }
 
