@@ -72,9 +72,10 @@ object XtreamRepository {
      * [xtreamAccountFromForm] layers the option fields on before the live verify + persist.
      */
     internal fun addFromForm(input: XtreamFormInput, onResult: (Boolean) -> Unit) {
+        val account = if (input.sourceType == SOURCE_TYPE_M3U_URL) m3uAccountFromForm(input) else xtreamAccountFromForm(input)
         verifyAndSave(
-            xtreamAccountFromForm(input),
-            "Enter a server URL, username and password",
+            account,
+            if (input.sourceType == SOURCE_TYPE_M3U_URL) "Enter an M3U playlist URL" else "Enter a server URL, username and password",
             onResult,
         )
     }
@@ -86,10 +87,11 @@ object XtreamRepository {
      * the form's own option fields (EPG/DNS/auto-refresh) always win because the form shows them.
      */
     internal fun editFromForm(oldId: String, input: XtreamFormInput, onResult: (Boolean) -> Unit) {
+        val candidate = if (input.sourceType == SOURCE_TYPE_M3U_URL) m3uAccountFromForm(input) else xtreamAccountFromForm(input)
         verifyAndReplace(
             oldId,
-            xtreamAccountFromForm(input),
-            "Enter a server URL, username and password",
+            candidate,
+            if (input.sourceType == SOURCE_TYPE_M3U_URL) "Enter an M3U playlist URL" else "Enter a server URL, username and password",
             onResult,
             // The form shows EPG/DNS/auto-refresh, so its candidate already carries the user's choices —
             // don't let carry-over revert them to the old account's values.
@@ -105,7 +107,8 @@ object XtreamRepository {
         }
         scope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
-            XtreamClient.verify(account)
+            // Xtream verifies creds against player_api.php; M3U verifies by ingesting the playlist.
+            IptvClient.forAccount(account).verify(account)
                 .onSuccess {
                     val updated = _uiState.value.accounts.filterNot { it.id == account.id } + account
                     _uiState.update { it.copy(accounts = updated, isValidating = false) }
@@ -159,7 +162,7 @@ object XtreamRepository {
         val account = carryPlaylistOptions(old, candidate, keepCandidateFormOptions)
         scope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
-            XtreamClient.verify(account)
+            IptvClient.forAccount(account).verify(account)
                 .onSuccess {
                     _uiState.update { st ->
                         st.copy(
@@ -171,6 +174,8 @@ object XtreamRepository {
                         )
                     }
                     if (account.id != oldId) migrateSavedData(old, account)
+                    // A changed M3U URL invalidates the old catalog rows — drop them.
+                    if (old.sourceType == SOURCE_TYPE_M3U_URL && old.id != account.id) M3UClient.clear(old)
                     // Re-run the discovery cycle: drop caches/URLs built with the old server/creds.
                     XtreamItemRegistry.resetForProfile()
                     XtreamHubRepository.resetForProfile()
@@ -218,7 +223,10 @@ object XtreamRepository {
     }
 
     fun remove(id: String) {
+        val removed = _uiState.value.accounts.firstOrNull { it.id == id }
         _uiState.update { it.copy(accounts = it.accounts.filterNot { acc -> acc.id == id }) }
+        // Free the parsed catalog rows for a removed M3U playlist (can be hundreds of MB of DB).
+        if (removed?.sourceType == SOURCE_TYPE_M3U_URL) scope.launch { M3UClient.clear(removed) }
         persist()
     }
 

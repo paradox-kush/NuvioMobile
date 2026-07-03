@@ -71,15 +71,20 @@ internal data class XtreamFormInput(
     val epgUrl: String?,
     val dnsProvider: String,
     val autoRefreshHours: Int,
+    // M3U-URL source (sourceType = m3u_url): the playlist URL + an optional custom User-Agent.
+    // Ignored for the Xtream source. Xtream stays the default so existing call sites are unaffected.
+    val sourceType: String = SOURCE_TYPE_XTREAM,
+    val m3uUrl: String = "",
+    val userAgent: String? = null,
 )
 
 /**
- * The four playlist source types from the reference design. Only [XTREAM] is functional in P1;
- * the rest render with a "Soon" badge and can't be selected. Flip [enabled] per phase as each
- * source type's field-set + parsing lands (URL/FILE = P2, STALKER = P4).
+ * The four playlist source types from the reference design. [XTREAM] and [URL] (M3U) are functional
+ * (P1/P2); [FILE]/[STALKER] render with a "Soon" badge and can't be selected. Flip [enabled] per
+ * phase as each source type's field-set + parsing lands (FILE = later P2, STALKER = P4).
  */
 internal enum class XtreamSourceType(val label: String, val enabled: Boolean) {
-    URL("URL", enabled = false),
+    URL("URL", enabled = true),
     FILE("File", enabled = false),
     XTREAM("Xtream", enabled = true),
     STALKER("Stalker", enabled = false),
@@ -125,14 +130,20 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
         val editing = XtreamAddPage.editId?.let { id -> state.accounts.firstOrNull { it.id == id } }
 
         // Prefilled once per target playlist (add mode -> blank). Fields are plain remembered state.
-        var sourceType by remember(editing?.id) { mutableStateOf(XtreamSourceType.XTREAM) }
-        var server by remember(editing?.id) { mutableStateOf(editing?.baseUrl ?: "") }
+        val editingIsM3u = editing?.sourceType == SOURCE_TYPE_M3U_URL
+        var sourceType by remember(editing?.id) {
+            mutableStateOf(if (editingIsM3u) XtreamSourceType.URL else XtreamSourceType.XTREAM)
+        }
+        var server by remember(editing?.id) { mutableStateOf(if (editingIsM3u) "" else editing?.baseUrl ?: "") }
         var username by remember(editing?.id) { mutableStateOf(editing?.username ?: "") }
         var password by remember(editing?.id) { mutableStateOf(editing?.password ?: "") }
         var name by remember(editing?.id) { mutableStateOf(editing?.name ?: "") }
         var epgUrl by remember(editing?.id) { mutableStateOf(editing?.epgUrl ?: "") }
         var dnsProvider by remember(editing?.id) { mutableStateOf(editing?.dnsProvider ?: "system") }
         var autoRefreshHours by remember(editing?.id) { mutableStateOf(editing?.autoRefreshHours ?: 24) }
+        // M3U-URL source fields (baseUrl carries the M3U URL for m3u_url accounts).
+        var m3uUrl by remember(editing?.id) { mutableStateOf(if (editingIsM3u) editing?.baseUrl ?: "" else "") }
+        var userAgent by remember(editing?.id) { mutableStateOf(editing?.userAgent ?: "") }
 
         SourceTypeSection(
             isTablet = isTablet,
@@ -164,9 +175,17 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
                 name = name,
                 onNameChange = { name = it },
             )
-            // URL / File / Stalker field-sets are P2/P4 — the tiles above are disabled so these
-            // branches are never reached in P1. TODO(playlist-manager P2/P4): render each source
-            // type's own field-set here (M3U URL + optional EPG url; Stalker portal + MAC).
+            XtreamSourceType.URL -> M3UFieldsSection(
+                isTablet = isTablet,
+                m3uUrl = m3uUrl,
+                onM3uUrlChange = { m3uUrl = it },
+                userAgent = userAgent,
+                onUserAgentChange = { userAgent = it },
+                name = name,
+                onNameChange = { name = it },
+            )
+            // File / Stalker field-sets are later-P2 / P4 — those tiles stay disabled so their
+            // branches are never reached. TODO(playlist-manager): Stalker portal + MAC; File picker.
             else -> Unit
         }
 
@@ -192,8 +211,10 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
             isTablet = isTablet,
             state = state,
             isEdit = XtreamAddPage.isEdit,
-            canSave = sourceType.enabled &&
-                server.isNotBlank() && username.isNotBlank() && password.isNotBlank(),
+            canSave = sourceType.enabled && when (sourceType) {
+                XtreamSourceType.URL -> m3uUrl.isNotBlank()
+                else -> server.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+            },
             onSave = {
                 val input = XtreamFormInput(
                     serverUrl = server,
@@ -203,6 +224,9 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
                     epgUrl = epgUrl.trim().ifEmpty { null },
                     dnsProvider = dnsProvider,
                     autoRefreshHours = autoRefreshHours,
+                    sourceType = if (sourceType == XtreamSourceType.URL) SOURCE_TYPE_M3U_URL else SOURCE_TYPE_XTREAM,
+                    m3uUrl = m3uUrl,
+                    userAgent = userAgent.trim().ifEmpty { null },
                 )
                 val editId = XtreamAddPage.editId
                 if (editId != null) {
@@ -299,6 +323,50 @@ private fun XtreamFieldsSection(
                 value = name,
                 onValueChange = onNameChange,
                 label = "Name (optional)",
+            )
+        }
+    }
+}
+
+@Composable
+private fun M3UFieldsSection(
+    isTablet: Boolean,
+    m3uUrl: String,
+    onM3uUrlChange: (String) -> Unit,
+    userAgent: String,
+    onUserAgentChange: (String) -> Unit,
+    name: String,
+    onNameChange: (String) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    SettingsSection(title = "M3U Playlist", isTablet = isTablet) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = NuvioTokens.Space.s2),
+            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
+        ) {
+            FormOutlinedField(
+                value = m3uUrl,
+                onValueChange = onM3uUrlChange,
+                label = "M3U URL",
+                placeholder = "http://host:port/get.php?username=…&type=m3u_plus",
+            )
+            FormOutlinedField(
+                value = userAgent,
+                onValueChange = onUserAgentChange,
+                label = "User-Agent (optional)",
+                placeholder = "e.g. VLC/3.0.20 LibVLC/3.0.20",
+            )
+            FormOutlinedField(
+                value = name,
+                onValueChange = onNameChange,
+                label = "Name (optional)",
+            )
+            Text(
+                text = "The playlist is downloaded and indexed on save. Large playlists can take a moment.",
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.colors.textMuted,
             )
         }
     }

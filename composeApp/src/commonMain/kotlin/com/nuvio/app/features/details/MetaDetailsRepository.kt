@@ -578,17 +578,25 @@ object MetaDetailsRepository {
         streamId: Int?,
     ): MetaDetails? {
         if (streamId == null) return null
+        val client = com.nuvio.app.features.iptv.IptvClient.forAccount(account)
         val registered = XtreamItemRegistry.get(id)
-        val detail = XtreamClient.vodInfo(account, streamId).getOrNull()
+        val detail = client.vodInfo(account, streamId).getOrNull()
         val name = detail?.name ?: registered?.name ?: "Movie"
         val poster = registered?.poster
         // ponytail: prefer the real container_extension from vod_info over a stale registered URL.
         // The browse/list flow registers a ".mp4" URL (the list endpoint omits container_extension);
         // a wrong ".mp4" makes the Download save a mis-named/broken file the local player can't load (B11).
-        val streamUrl = detail?.containerExtension?.takeIf { it.isNotBlank() }
-            ?.let { XtreamClient.movieStreamUrl(account, streamId, it) }
+        // M3U's movieStreamUrl returns "" (URL is a stored line, not a template), so fall to the
+        // registered URL, then the DB read — never a synthesized Xtream-shaped URL.
+        val templated = detail?.containerExtension?.takeIf { it.isNotBlank() }
+            ?.let { client.movieStreamUrl(account, streamId, it) }?.takeIf { it.isNotBlank() }
+        val streamUrl = templated
             ?: registered?.streamUrl
-            ?: XtreamClient.movieStreamUrl(account, streamId, "mp4")
+            ?: (if (account.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_M3U_URL)
+                    com.nuvio.app.features.iptv.M3UClient.movieUrlFor(account, streamId)
+                else null)
+            ?: client.movieStreamUrl(account, streamId, "mp4").takeIf { it.isNotBlank() }
+            ?: return null
         XtreamItemRegistry.register(XtreamResolvedItem(id, accountId, XtreamKind.VOD, name, streamUrl, poster))
 
         var meta = MetaDetails(
@@ -620,9 +628,16 @@ object MetaDetailsRepository {
         val streamId = parsed.id.toIntOrNull() ?: return false
         val account = XtreamRepository.uiState.value.accounts
             .firstOrNull { it.id == parsed.accountId } ?: return false
-        val detail = XtreamClient.vodInfo(account, streamId).getOrNull()
+        val client = com.nuvio.app.features.iptv.IptvClient.forAccount(account)
+        val detail = client.vodInfo(account, streamId).getOrNull()
         // ponytail: vodInfo gives the correct container_extension; fall back to mp4 only if absent.
-        val streamUrl = XtreamClient.movieStreamUrl(account, streamId, detail?.containerExtension ?: "mp4")
+        // M3U's movieStreamUrl is "" (stored line), so read the DB URL instead.
+        val streamUrl = client.movieStreamUrl(account, streamId, detail?.containerExtension ?: "mp4")
+            .takeIf { it.isNotBlank() }
+            ?: (if (account.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_M3U_URL)
+                    com.nuvio.app.features.iptv.M3UClient.movieUrlFor(account, streamId)
+                else null)
+            ?: return false
         XtreamItemRegistry.register(
             XtreamResolvedItem(id, parsed.accountId, XtreamKind.VOD, detail?.name ?: "Movie", streamUrl)
         )
@@ -636,11 +651,18 @@ object MetaDetailsRepository {
         seriesId: Int?,
     ): MetaDetails? {
         if (seriesId == null) return null
+        val isM3u = account.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_M3U_URL
+        val client = com.nuvio.app.features.iptv.IptvClient.forAccount(account)
         val registered = XtreamItemRegistry.get(id)
-        val detail = XtreamClient.seriesInfo(account, seriesId).getOrNull()
+        val detail = client.seriesInfo(account, seriesId).getOrNull()
         val videos = detail?.episodes.orEmpty().map { ep ->
             val episodeContentId = XtreamItemRegistry.episodeId(accountId, ep.episodeId)
-            val episodeUrl = XtreamClient.episodeStreamUrl(account, ep.episodeId, ep.containerExtension ?: "mp4")
+            // Xtream builds the episode URL from its id; M3U reads the stored line from the DB.
+            val episodeUrl = if (isM3u) {
+                com.nuvio.app.features.iptv.M3UClient.episodeUrlFor(account, ep.episodeId) ?: ""
+            } else {
+                client.episodeStreamUrl(account, ep.episodeId, ep.containerExtension ?: "mp4")
+            }
             XtreamItemRegistry.register(
                 XtreamResolvedItem(episodeContentId, accountId, XtreamKind.EPISODE, ep.title, episodeUrl)
             )

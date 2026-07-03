@@ -106,12 +106,13 @@ internal fun LazyListScope.xtreamContentSettingsContent(
         var categories by remember(account.id) { mutableStateOf<Map<String, List<XtreamCategory>>>(emptyMap()) }
         var fetchAttempt by remember(account.id) { mutableStateOf(0) }
         LaunchedEffect(account.id, fetchAttempt) {
+            val client = IptvClient.forAccount(account)   // xtream -> panel, m3u_url -> content DB
             for ((type, _) in TYPE_LABELS) {
                 if (categories[type] != null) continue
                 val fetched = when (type) {
-                    CONTENT_TYPE_LIVE -> XtreamClient.liveCategories(account)
-                    CONTENT_TYPE_MOVIES -> XtreamClient.vodCategories(account)
-                    else -> XtreamClient.seriesCategories(account)
+                    CONTENT_TYPE_LIVE -> client.liveCategories(account)
+                    CONTENT_TYPE_MOVIES -> client.vodCategories(account)
+                    else -> client.seriesCategories(account)
                 }.getOrNull()
                 if (fetched != null) categories = categories + (type to fetched)
             }
@@ -196,10 +197,11 @@ internal fun LazyListScope.xtreamCategoryChecklistContent(
         var fetchAttempt by remember(account.id, type) { mutableStateOf(0) }
         LaunchedEffect(account.id, type, fetchAttempt) {
             failed = false   // back to the spinner while (re)fetching
+            val client = IptvClient.forAccount(account)
             val fetched = when (type) {
-                CONTENT_TYPE_LIVE -> XtreamClient.liveCategories(account)
-                CONTENT_TYPE_MOVIES -> XtreamClient.vodCategories(account)
-                else -> XtreamClient.seriesCategories(account)
+                CONTENT_TYPE_LIVE -> client.liveCategories(account)
+                CONTENT_TYPE_MOVIES -> client.vodCategories(account)
+                else -> client.seriesCategories(account)
             }.getOrNull()
             if (fetched != null) categories = fetched else failed = true
         }

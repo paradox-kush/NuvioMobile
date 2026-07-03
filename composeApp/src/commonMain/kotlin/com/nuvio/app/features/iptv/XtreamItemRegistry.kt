@@ -75,13 +75,33 @@ object XtreamItemRegistry {
      * Rebuilds a live channel's stream URL straight from its id (accountId + streamId), so a
      * favorited channel plays from the Library after a fresh launch even when the in-memory
      * registry is empty. Returns null if the account is gone or the id isn't a live id.
+     *
+     * Xtream URLs are rebuildable from creds synchronously. An M3U channel's URL lives only in the
+     * content DB (it's an arbitrary line), so this returns null for M3U — use [liveStreamUrlForAsync].
      */
     fun liveStreamUrlFor(contentId: String): String? {
         val parsed = parseId(contentId) ?: return null
         if (parsed.kind != XtreamKind.LIVE) return null
         val streamId = parsed.id.toIntOrNull() ?: return null
         val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == parsed.accountId } ?: return null
+        if (account.sourceType == SOURCE_TYPE_M3U_URL) return null   // DB-backed; caller falls to the async path
         return XtreamClient.liveStreamUrl(account, streamId)
+    }
+
+    /**
+     * Resolves a live channel's URL for either source. For Xtream it's the synchronous rebuild; for
+     * M3U it reads the stored line from the content DB (ingesting first if this playlist was never
+     * browsed on this device). Used by the cold-launch play path when the registry is empty.
+     */
+    suspend fun liveStreamUrlForAsync(contentId: String): String? {
+        liveStreamUrlFor(contentId)?.let { return it }
+        val parsed = parseId(contentId) ?: return null
+        if (parsed.kind != XtreamKind.LIVE) return null
+        val streamId = parsed.id.toIntOrNull() ?: return null
+        val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == parsed.accountId } ?: return null
+        if (account.sourceType != SOURCE_TYPE_M3U_URL) return null
+        M3UClient.ensureIngested(account)
+        return M3UClient.liveUrlFor(account, streamId)
     }
 
     fun accountNameFor(contentId: String): String? {

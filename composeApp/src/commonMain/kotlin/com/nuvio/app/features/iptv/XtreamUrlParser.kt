@@ -78,3 +78,28 @@ internal fun xtreamAccountFromForm(input: XtreamFormInput): XtreamAccount? {
         autoRefreshHours = input.autoRefreshHours,
     )
 }
+
+/**
+ * Builds an M3U-URL playlist account from the "Add Playlist" form. The M3U URL IS the identity —
+ * there's no username/password — so the id is `m3u|$url`, baseUrl carries the URL, and username/
+ * password stay empty. Returns null if the URL is blank or unparseable. internal for unit tests.
+ */
+internal fun m3uAccountFromForm(input: XtreamFormInput): XtreamAccount? {
+    val raw = input.m3uUrl.trim()
+    if (raw.isEmpty()) return null
+    val withScheme = if (raw.startsWith("http://", true) || raw.startsWith("https://", true)) raw else "http://$raw"
+    val url = try { Url(withScheme) } catch (e: Exception) { return null }
+    if (url.host.isBlank()) return null
+    return XtreamAccount(
+        id = "m3u|$withScheme",
+        name = input.name?.trim()?.takeIf { it.isNotEmpty() } ?: url.host,
+        baseUrl = withScheme,             // the full M3U URL (path + query kept — it's the fetch target)
+        username = "",
+        password = "",
+        sourceType = SOURCE_TYPE_M3U_URL,
+        epgUrl = input.epgUrl?.trim()?.takeIf { it.isNotEmpty() },
+        dnsProvider = input.dnsProvider,
+        autoRefreshHours = input.autoRefreshHours,
+        userAgent = input.userAgent?.trim()?.takeIf { it.isNotEmpty() },
+    )
+}

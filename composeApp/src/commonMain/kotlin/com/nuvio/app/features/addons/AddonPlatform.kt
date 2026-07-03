@@ -37,3 +37,16 @@ expect suspend fun httpRequestRaw(
     body: String,
     followRedirects: Boolean = true,
 ): RawHttpResponse
+
+/**
+ * Streams a text resource line-by-line to [onLine], NEVER materializing the whole body as a String.
+ * Required for M3U ingestion: a provider playlist can be 190+ MB — [httpGetText] would OOM. The
+ * response is gzip-decoded transparently when the server sends `Content-Encoding: gzip`. [onLine]
+ * runs on a background thread; keep it cheap (buffer + flush) and do not block it. Throws on a
+ * non-2xx status. Memory stays O(one line + the caller's buffer).
+ */
+expect suspend fun httpStreamLines(
+    url: String,
+    userAgent: String?,
+    onLine: (String) -> Unit,
+)

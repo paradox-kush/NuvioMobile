@@ -982,11 +982,11 @@ private fun MainAppContent(
     var lastExternalPlayerLaunch by remember { mutableStateOf<PlayerLaunch?>(null) }
     val activePlaybackProfileId = profileState.activeProfile?.profileIndex ?: ProfileRepository.activeProfileId
 
-    // Shared launch for an Xtream LIVE channel (from the hub or the Library) — forces libmpv via
+    // Shared launch for an IPTV LIVE channel (from the hub or the Library) — forces libmpv via
     // streamType="live". The URL is rebuilt from the id when the caller doesn't have one (e.g. a
-    // favorite opened from the Library after a fresh launch, when the registry is empty).
-    fun playLiveXtreamChannel(contentId: String, name: String, logo: String?, url: String?) {
-        val resolvedUrl = url ?: XtreamItemRegistry.liveStreamUrlFor(contentId) ?: return
+    // favorite opened from the Library after a fresh launch, when the registry is empty). For M3U
+    // channels the URL isn't rebuildable from creds, so it's resolved from the content DB async.
+    fun launchLiveChannel(contentId: String, name: String, logo: String?, resolvedUrl: String) {
         XtreamLiveRecents.record(contentId, name, logo)
         val liveLaunch = PlayerLaunch(
             profileId = activePlaybackProfileId,
@@ -994,7 +994,7 @@ private fun MainAppContent(
             sourceUrl = resolvedUrl,
             streamTitle = name,
             streamType = "live",
-            providerName = XtreamItemRegistry.accountNameFor(contentId) ?: "Xtream",
+            providerName = XtreamItemRegistry.accountNameFor(contentId) ?: "IPTV",
             providerAddonId = "xtream",
             logo = logo,
             contentType = "live",
@@ -1003,6 +1003,19 @@ private fun MainAppContent(
             parentMetaType = "tv",
         )
         navController.navigate(PlayerRoute(launchId = PlayerLaunchStore.put(liveLaunch)))
+    }
+
+    fun playLiveXtreamChannel(contentId: String, name: String, logo: String?, url: String?) {
+        val immediate = url ?: XtreamItemRegistry.liveStreamUrlFor(contentId)
+        if (immediate != null) {
+            launchLiveChannel(contentId, name, logo, immediate)
+            return
+        }
+        // M3U live: the URL lives only in the content DB (arbitrary line) — resolve off the main thread.
+        coroutineScope.launch {
+            val resolved = XtreamItemRegistry.liveStreamUrlForAsync(contentId) ?: return@launch
+            launchLiveChannel(contentId, name, logo, resolved)
+        }
     }
 
     val launchExternalPlayer = rememberExternalPlayerLauncher { result ->

@@ -70,6 +70,7 @@ class MainActivity : AppCompatActivity() {
         AddonStorage.initialize(applicationContext)
         com.nuvio.app.features.iptv.XtreamAccountStorage.initialize(applicationContext)
         com.nuvio.app.features.iptv.match.MatchDbDriver.initialize(applicationContext)
+        com.nuvio.app.features.iptv.content.IptvContentDbDriver.initialize(applicationContext)
         AuthStorage.initialize(applicationContext)
         SyncBackendStorage.initialize(applicationContext)
         LibraryStorage.initialize(applicationContext)

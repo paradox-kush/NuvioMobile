@@ -7,14 +7,17 @@ import io.ktor.client.request.accept
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
 import io.ktor.client.request.url
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.isSuccess
+import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.runBlocking
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.network_empty_response_body
@@ -160,6 +163,32 @@ actual suspend fun httpPostJsonWithHeaders(
             }
             payload
         }
+
+/**
+ * Ktor/Darwin streaming twin of the Android OkHttp version. Ktor transparently gunzips a
+ * `Content-Encoding: gzip` response, so reading the decoded channel line-by-line keeps memory
+ * bounded even for a 190+ MB playlist. (A bare `.gz` body with no encoding header would arrive
+ * still-compressed; providers that serve M3U over http set the encoding header, and the
+ * upgrade path is a manual gunzip if a real provider is found not to.)
+ */
+actual suspend fun httpStreamLines(
+    url: String,
+    userAgent: String?,
+    onLine: (String) -> Unit,
+) {
+    addonHttpClient.prepareGet(url) {
+        if (!userAgent.isNullOrBlank()) header(HttpHeaders.UserAgent, userAgent)
+    }.execute { response ->
+        if (!response.status.isSuccess()) {
+            error(runBlocking { getString(Res.string.network_request_failed_http, response.status.value) })
+        }
+        val channel = response.bodyAsChannel()
+        while (true) {
+            val line = channel.readUTF8Line() ?: break
+            onLine(line)
+        }
+    }
+}
 
 actual suspend fun httpRequestRaw(
     method: String,

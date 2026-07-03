@@ -20,6 +20,8 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import kotlin.text.Charsets
 import java.util.concurrent.TimeUnit
+import okio.GzipSource
+import okio.buffer
 
 actual object AddonStorage {
     private const val preferencesName = "nuvio_addons"
@@ -286,3 +288,40 @@ actual suspend fun httpRequestRaw(
             )
         }
     }
+
+actual suspend fun httpStreamLines(
+    url: String,
+    userAgent: String?,
+    onLine: (String) -> Unit,
+): Unit = withContext(Dispatchers.IO) {
+    val builder = Request.Builder().url(url).get()
+    if (!userAgent.isNullOrBlank()) builder.header("User-Agent", userAgent)
+    // OkHttp transparently gunzips a `Content-Encoding: gzip` response when we don't set
+    // Accept-Encoding ourselves — so leave it unset. For a URL that returns a raw .gz body
+    // (no Content-Encoding header), we sniff the gzip magic bytes and wrap manually.
+    val request = builder.build()
+    addonHttpClient.newCall(request).execute().use { response ->
+        if (!response.isSuccessful) {
+            error(runBlocking { getString(Res.string.network_request_failed_http, response.code) })
+        }
+        val body = response.body ?: return@use
+        val rawSource = body.source()
+        val encoding = response.header("Content-Encoding")?.lowercase()
+        // Peek the first two bytes for the gzip magic (0x1f 0x8b) — only when OkHttp didn't
+        // already decode (encoding is null because the server sent a bare .gz file).
+        val looksGzipped = encoding == null && runCatching {
+            rawSource.request(2)
+            rawSource.buffer.size >= 2 &&
+                rawSource.buffer[0] == 0x1f.toByte() && rawSource.buffer[1] == 0x8b.toByte()
+        }.getOrDefault(false)
+        val source: okio.BufferedSource = if (looksGzipped) {
+            GzipSource(rawSource).buffer()
+        } else {
+            rawSource
+        }
+        while (true) {
+            val line = source.readUtf8Line() ?: break
+            onLine(line)
+        }
+    }
+}
