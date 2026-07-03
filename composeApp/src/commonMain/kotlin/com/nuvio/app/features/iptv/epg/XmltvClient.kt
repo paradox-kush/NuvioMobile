@@ -76,7 +76,7 @@ object XmltvClient {
             keepChannelIds = allow,
             onProgramme = { p -> collector.add(p) },
         )
-        streamGuideLines(source, acc.userAgent()) { line ->
+        streamGuideLines(source, acc.userAgent(), acc.dnsProvider) { line ->
             parser.feed(line)
             parser.feed("\n")
         }
@@ -112,8 +112,8 @@ object XmltvClient {
     // --- internals ---------------------------------------------------------------
 
     /** Streams the guide's lines. Network only in P2 — a `file://` EPG source is a later upgrade. */
-    private suspend fun streamGuideLines(source: EpgSource, userAgent: String?, onLine: (String) -> Unit) {
-        httpStreamLines(source.url, userAgent, onLine)
+    private suspend fun streamGuideLines(source: EpgSource, userAgent: String?, dnsProvider: String?, onLine: (String) -> Unit) {
+        httpStreamLines(source.url, userAgent, dnsProvider, onLine)
     }
 
     private class EpgCollector(private val playlistId: String) {

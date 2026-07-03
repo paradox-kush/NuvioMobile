@@ -83,7 +83,10 @@ private val addonHttpClient = HttpClient(Darwin) {
     expectSuccess = false
 }
 
-actual suspend fun httpGetText(url: String): String =
+// [dnsProvider] (P3) is Android-only: Ktor Darwin / URLSession has no per-app DNS hook, so a
+// per-playlist DoH resolver can't be installed on iOS. It's ignored here (the settings form already
+// tells the user "Android only — iOS ignores this setting").
+actual suspend fun httpGetText(url: String, dnsProvider: String?): String =
     addonHttpClient
         .get(url) {
             accept(ContentType.Application.Json)
@@ -174,6 +177,7 @@ actual suspend fun httpPostJsonWithHeaders(
 actual suspend fun httpStreamLines(
     url: String,
     userAgent: String?,
+    dnsProvider: String?,   // Android-only (no-op on iOS — see httpGetText).
     onLine: (String) -> Unit,
 ) {
     addonHttpClient.prepareGet(url) {

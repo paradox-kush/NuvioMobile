@@ -166,4 +166,16 @@ object XtreamSearchIndex {
         channelCache.clear()
         channelJobs.clear()
     }
+
+    /**
+     * Drops one account's cached channel list so the next search re-fetches it fresh. Used by the P3
+     * auto-refresh for Xtream playlists (which are API-on-demand — there's no catalog to re-ingest, so
+     * "refreshing" just means invalidating the session cache + re-warming it).
+     */
+    suspend fun invalidate(accountId: String) {
+        mutex.withLock {
+            channelCache.remove(accountId)
+            channelJobs.remove(accountId)
+        }
+    }
 }

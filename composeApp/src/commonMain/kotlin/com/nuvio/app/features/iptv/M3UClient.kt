@@ -103,7 +103,8 @@ object M3UClient : IptvClient {
             if (!fileExists(path)) error("Playlist file for '${acc.name}' is missing — re-import it on this device.")
             streamFileLines(path, onLine)
         } else {
-            httpStreamLines(url, acc.userAgent(), onLine)
+            // dnsProvider (P3) routes the M3U fetch through the playlist's DoH resolver on Android.
+            httpStreamLines(url, acc.userAgent(), acc.dnsProvider, onLine)
         }
     }
 

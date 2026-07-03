@@ -3,6 +3,7 @@ package com.nuvio.app.features.addons
 import android.content.Context
 import android.content.SharedPreferences
 import com.nuvio.app.core.network.IPv4FirstDns
+import com.nuvio.app.core.network.PlaylistDns
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -163,11 +164,20 @@ private fun readResponseBody(body: ResponseBody?): String {
     }
 }
 
+/**
+ * The client for a request: the per-playlist DoH client when [dnsProvider] names a real resolver
+ * (P3, IPTV only), else the shared addon client. Any failure building the DoH client falls back to
+ * [addonHttpClient] — DNS must never break a fetch.
+ */
+private fun clientForDns(dnsProvider: String?): OkHttpClient =
+    runCatching { PlaylistDns.clientFor(dnsProvider, addonHttpClient) }.getOrNull() ?: addonHttpClient
+
 private suspend fun executeTextRequest(
     method: String,
     url: String,
     headers: Map<String, String> = emptyMap(),
     body: String = "",
+    dnsProvider: String? = null,
 ): String = withContext(Dispatchers.IO) {
     val normalizedMethod = method.uppercase()
     val sanitizedHeaders = headers.withoutAcceptEncoding()
@@ -186,7 +196,7 @@ private suspend fun executeTextRequest(
         builder.method(normalizedMethod, null)
     }.build()
 
-    addonHttpClient.newCall(request).execute().use { response ->
+    clientForDns(dnsProvider).newCall(request).execute().use { response ->
         val payload = readResponseBody(response.body)
         if (!response.isSuccessful) {
             error(runBlocking { getString(Res.string.network_request_failed_http, response.code) })
@@ -198,11 +208,12 @@ private suspend fun executeTextRequest(
     }
 }
 
-actual suspend fun httpGetText(url: String): String =
+actual suspend fun httpGetText(url: String, dnsProvider: String?): String =
     executeTextRequest(
         method = "GET",
         url = url,
         headers = mapOf("Accept" to "application/json"),
+        dnsProvider = dnsProvider,
     )
 
 actual suspend fun httpPostJson(url: String, body: String): String =
@@ -292,6 +303,7 @@ actual suspend fun httpRequestRaw(
 actual suspend fun httpStreamLines(
     url: String,
     userAgent: String?,
+    dnsProvider: String?,
     onLine: (String) -> Unit,
 ): Unit = withContext(Dispatchers.IO) {
     val builder = Request.Builder().url(url).get()
@@ -300,7 +312,7 @@ actual suspend fun httpStreamLines(
     // Accept-Encoding ourselves — so leave it unset. For a URL that returns a raw .gz body
     // (no Content-Encoding header), we sniff the gzip magic bytes and wrap manually.
     val request = builder.build()
-    addonHttpClient.newCall(request).execute().use { response ->
+    clientForDns(dnsProvider).newCall(request).execute().use { response ->
         if (!response.isSuccessful) {
             error(runBlocking { getString(Res.string.network_request_failed_http, response.code) })
         }

@@ -26,7 +26,7 @@ object XtreamClient : IptvClient {
 
     /** Verifies credentials. Success only when the panel reports auth=1 and an active status. */
     override suspend fun verify(acc: XtreamAccount): Result<Unit> = call {
-        val info = userInfo(playerApi(acc))
+        val info = userInfo(playerApi(acc), acc.dnsProvider)
         check(info?.get("auth").asIntOrNull() == 1) { "Authentication failed" }
         val status = info?.get("status").asStringOrNull()?.lowercase() ?: ""
         check(status.isEmpty() || status == "active") { "Account status: ${info?.get("status").asStringOrNull()}" }
@@ -34,7 +34,7 @@ object XtreamClient : IptvClient {
 
     /** Live account status: active/expired, trial flag, expiry, and current vs max connections. */
     suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo?> = call {
-        val info = userInfo(playerApi(acc)) ?: return@call null
+        val info = userInfo(playerApi(acc), acc.dnsProvider) ?: return@call null
         XtreamAccountInfo(
             status = info["status"].asStringOrNull(),
             isTrial = info["is_trial"].asStringOrNull() == "1",
@@ -45,8 +45,8 @@ object XtreamClient : IptvClient {
     }
 
     /** `user_info` object from the no-action player_api call, parsed loosely. */
-    private suspend fun userInfo(url: String): JsonObject? =
-        runCatching { json.parseToJsonElement(httpGetText(url)).jsonObject["user_info"] as? JsonObject }.getOrNull()
+    private suspend fun userInfo(url: String, dnsProvider: String?): JsonObject? =
+        runCatching { json.parseToJsonElement(httpGetText(url, dnsProvider)).jsonObject["user_info"] as? JsonObject }.getOrNull()
 
     override suspend fun liveCategories(acc: XtreamAccount) = categories(acc, "get_live_categories")
     override suspend fun vodCategories(acc: XtreamAccount) = categories(acc, "get_vod_categories")
@@ -58,7 +58,7 @@ object XtreamClient : IptvClient {
     // onnipsite sends `rating` as `0`, not `"0"`). A strict decode throws on the FIRST such
     // field and loses the ENTIRE catalog, so the provider's index silently never builds.
     override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?): Result<List<XtreamChannel>> = call {
-        jsonArray(playerApi(acc, "get_live_streams", categoryId)).mapNotNull { o ->
+        jsonArray(acc, playerApi(acc, "get_live_streams", categoryId)).mapNotNull { o ->
             val id = o["stream_id"].asIntOrNull() ?: return@mapNotNull null
             XtreamChannel(
                 streamId = id,
@@ -73,16 +73,16 @@ object XtreamClient : IptvClient {
     }
 
     override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = call {
-        jsonArray(playerApi(acc, "get_vod_streams", categoryId)).mapNotNull { o -> parseVodItem(acc, o) }
+        jsonArray(acc, playerApi(acc, "get_vod_streams", categoryId)).mapNotNull { o -> parseVodItem(acc, o) }
     }
 
     override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = call {
-        jsonArray(playerApi(acc, "get_series", categoryId)).mapNotNull { o -> parseSeriesItem(o) }
+        jsonArray(acc, playerApi(acc, "get_series", categoryId)).mapNotNull { o -> parseSeriesItem(o) }
     }
 
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = call {
         val url = playerApi(acc, "get_short_epg") + "&stream_id=$streamId&limit=$limit"
-        val root = runCatching { json.parseToJsonElement(httpGetText(url)).jsonObject }.getOrNull() ?: return@call emptyList()
+        val root = runCatching { json.parseToJsonElement(httpGetText(url, acc.dnsProvider)).jsonObject }.getOrNull() ?: return@call emptyList()
         (root["epg_listings"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.map { o ->
             XtreamProgram(
                 title = decodeXtreamBase64(o["title"].asStringOrNull()),
@@ -99,7 +99,7 @@ object XtreamClient : IptvClient {
      * panel sends `info: []` — a known quirk — so callers fall back to bare Xtream metadata.
      */
     override suspend fun vodInfo(acc: XtreamAccount, vodId: Int): Result<XtreamVodDetail?> = call {
-        val text = httpGetText(playerApi(acc, "get_vod_info") + "&vod_id=$vodId")
+        val text = httpGetText(playerApi(acc, "get_vod_info") + "&vod_id=$vodId", acc.dnsProvider)
         val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return@call null
         val info = root["info"] as? JsonObject   // null when the panel sends info: []
         val movieData = root["movie_data"] as? JsonObject
@@ -121,7 +121,7 @@ object XtreamClient : IptvClient {
      * decode throws on the first `info: []` and loses every episode — so we walk the JSON instead.
      */
     override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail?> = call {
-        val text = httpGetText(playerApi(acc, "get_series_info") + "&series_id=$seriesId")
+        val text = httpGetText(playerApi(acc, "get_series_info") + "&series_id=$seriesId", acc.dnsProvider)
         val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return@call null
         val info = root["info"] as? JsonObject
         val episodes = (root["episodes"] as? JsonObject).orEmptyEntries().flatMap { (seasonKey, seasonEps) ->
@@ -201,7 +201,7 @@ object XtreamClient : IptvClient {
     private fun String.splitCsv(): List<String> = split(",").mapNotNull { it.trim().ifBlank { null } }
 
     private suspend fun categories(acc: XtreamAccount, action: String): Result<List<XtreamCategory>> = call {
-        jsonArray(playerApi(acc, action)).mapNotNull { o ->
+        jsonArray(acc, playerApi(acc, action)).mapNotNull { o ->
             val id = o["category_id"].asStringOrNull() ?: return@mapNotNull null
             XtreamCategory(id, o["category_name"].asStringOrNull() ?: "")
         }
@@ -238,8 +238,8 @@ object XtreamClient : IptvClient {
         )
     }
 
-    private suspend fun jsonArray(url: String): List<JsonObject> =
-        (json.parseToJsonElement(httpGetText(url)) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+    private suspend fun jsonArray(acc: XtreamAccount, url: String): List<JsonObject> =
+        (json.parseToJsonElement(httpGetText(url, acc.dnsProvider)) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
 
     private fun playerApi(acc: XtreamAccount, action: String? = null, categoryId: String? = null): String {
         val base = acc.baseUrl.trimEnd('/')

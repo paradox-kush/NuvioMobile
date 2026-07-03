@@ -109,6 +109,12 @@ object XtreamItemRegistry {
         return XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }?.name
     }
 
+    /** The playlist's DNS provider for a content id (drives the P3 live-mpv DoH path). "system" if unknown. */
+    fun dnsProviderFor(contentId: String): String {
+        val accountId = parseId(contentId)?.accountId ?: return "system"
+        return XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }?.dnsProvider ?: "system"
+    }
+
     /** The single direct StreamItem for a playable id, or null (series containers aren't directly playable). */
     fun streamItemFor(contentId: String): StreamItem? {
         val item = get(contentId) ?: return null
