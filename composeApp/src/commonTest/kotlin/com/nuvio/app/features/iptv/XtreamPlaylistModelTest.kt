@@ -108,12 +108,15 @@ class XtreamPlaylistModelTest {
     }
 
     @Test
-    fun pushParamsScopeEveryPushToXtreamSourceType() {
+    fun pushParamsScopeEveryPushToTheKnownSourceTypes() {
         val params = playlistPushParams(profileId = 3, accounts = listOf(base))
         assertEquals(3, params["p_profile_id"]!!.jsonPrimitive.int)
         assertEquals(1, params["p_playlists"]!!.jsonArray.size)
-        // Every push is scoped so a P1 full-replace can't delete a newer client's m3u/stalker rows.
-        assertEquals(listOf("xtream"), params["p_source_types"]!!.jsonArray.map { it.jsonPrimitive.content })
+        // Every push is scoped so the full-replace can't delete a FUTURE client's unknown rows.
+        assertEquals(
+            listOf("xtream", "m3u_url", "m3u_file", "stalker"),
+            params["p_source_types"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
         // Regular pushes omit the migration guard entirely.
         assertFalse("p_only_if_empty" in params)
     }
@@ -123,16 +126,102 @@ class XtreamPlaylistModelTest {
         val params = playlistPushParams(profileId = 1, accounts = listOf(base), onlyIfEmpty = true)
         // Two-device first-login race: the loser's migration push must no-op server-side.
         assertEquals(true, params["p_only_if_empty"]!!.jsonPrimitive.content.toBoolean())
-        assertEquals(listOf("xtream"), params["p_source_types"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(
+            listOf("xtream", "m3u_url", "m3u_file", "stalker"),
+            params["p_source_types"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
     }
 
     @Test
-    fun pullWithOnlyForeignSourceRowsIsAnEmptyRemote() {
-        val foreign = listOf(
-            PlaylistRow(sourceType = "m3u_url", name = "M3U"),
-            PlaylistRow(sourceType = "stalker", name = "Portal"),
+    fun pushPayloadCarriesPerTypeExtras() {
+        val m3u = XtreamAccount(
+            id = "m3u|http://h/list.m3u", name = "M3U", baseUrl = "http://h/list.m3u",
+            username = "", password = "", sourceType = SOURCE_TYPE_M3U_URL, userAgent = "VLC/3.0",
         )
-        // Zero usable xtream rows => empty remote; never applied as an empty list over local state.
+        val file = XtreamAccount(
+            id = "m3u_file|tv.m3u|1", name = "tv", baseUrl = "",
+            username = "", password = "", sourceType = SOURCE_TYPE_M3U_FILE, fileName = "tv.m3u",
+        )
+        val stalker = XtreamAccount(
+            id = "stalker|http://p:8080|00:1A:79:AA:BB:CC", name = "Portal", baseUrl = "http://p:8080",
+            username = "", password = "", sourceType = SOURCE_TYPE_STALKER,
+            macAddress = "00:1A:79:AA:BB:CC", serialNumber = "SN1", sendDeviceId = false,
+        )
+        val payload = playlistPushPayload(listOf(m3u, file, stalker))
+
+        val m3uRow = payload[0].jsonObject
+        assertEquals("m3u_url", m3uRow["source_type"]!!.jsonPrimitive.content)
+        assertEquals("http://h/list.m3u", m3uRow["url"]!!.jsonPrimitive.content)
+        assertEquals("VLC/3.0", m3uRow["user_agent"]!!.jsonPrimitive.content)
+
+        val fileRow = payload[1].jsonObject
+        assertEquals("m3u_file", fileRow["source_type"]!!.jsonPrimitive.content)
+        assertEquals("tv.m3u", fileRow["file_name"]!!.jsonPrimitive.content)
+
+        val stalkerRow = payload[2].jsonObject
+        assertEquals("stalker", stalkerRow["source_type"]!!.jsonPrimitive.content)
+        assertEquals("http://p:8080", stalkerRow["portal_url"]!!.jsonPrimitive.content)
+        assertEquals("00:1A:79:AA:BB:CC", stalkerRow["mac_address"]!!.jsonPrimitive.content)
+        assertEquals("SN1", stalkerRow["serial_number"]!!.jsonPrimitive.content)
+        assertEquals(false, stalkerRow["send_device_id"]!!.jsonPrimitive.content.toBoolean())
+        // null optionals stay omitted so the RPC's defaults apply
+        assertFalse("stalker_username" in stalkerRow)
+        assertFalse("device_id" in stalkerRow)
+    }
+
+    @Test
+    fun pullMapsEverySourceTypeToTheFormBuilderShape() {
+        // m3u_url: id/baseUrl are the playlist URL; UA rides its dedicated column.
+        val m3u = PlaylistRow(sourceType = "m3u_url", url = "http://h/list.m3u", userAgent = "VLC/3.0").toAccount()!!
+        assertEquals("m3u|http://h/list.m3u", m3u.id)
+        assertEquals("http://h/list.m3u", m3u.baseUrl)
+        assertEquals("VLC/3.0", m3u.userAgent)
+
+        // m3u_file: a re-import ghost — deterministic id, fileName kept, no local bytes implied.
+        val file = PlaylistRow(sourceType = "m3u_file", fileName = "tv.m3u", name = "TV").toAccount()!!
+        assertEquals("m3u_file|tv.m3u|synced", file.id)
+        assertEquals("tv.m3u", file.fileName)
+        assertEquals(SOURCE_TYPE_M3U_FILE, file.sourceType)
+
+        // stalker: portal in baseUrl, MAC + overrides on their fields, id matches the form builder.
+        val stalker = PlaylistRow(
+            sourceType = "stalker", portalUrl = "http://p:8080", macAddress = "00:1A:79:AA:BB:CC",
+            serialNumber = "SN1", sendDeviceId = false,
+        ).toAccount()!!
+        assertEquals("stalker|http://p:8080|00:1A:79:AA:BB:CC", stalker.id)
+        assertEquals("http://p:8080", stalker.baseUrl)
+        assertEquals("00:1A:79:AA:BB:CC", stalker.macAddress)
+        assertEquals("SN1", stalker.serialNumber)
+        assertFalse(stalker.sendDeviceId)
+
+        // TV's internal spellings are tolerated as aliases on the wire.
+        assertEquals(SOURCE_TYPE_M3U_URL, PlaylistRow(sourceType = "url", url = "http://h/l.m3u").toAccount()!!.sourceType)
+    }
+
+    @Test
+    fun reconcileKeepsTheLocalFilePlaylistId() {
+        val local = XtreamAccount(
+            id = "m3u_file|tv.m3u|1719000000", name = "tv", baseUrl = "",
+            username = "", password = "", sourceType = SOURCE_TYPE_M3U_FILE, fileName = "tv.m3u",
+        )
+        val pulled = PlaylistRow(sourceType = "m3u_file", fileName = "tv.m3u", dnsProvider = "quad9").toAccount()!!
+        val reconciled = reconcileLocalIds(listOf(pulled), listOf(local)).single()
+        // The local id (and with it the local file copy + saved content keys) survives the pull;
+        // the remote's option edits still apply.
+        assertEquals("m3u_file|tv.m3u|1719000000", reconciled.id)
+        assertEquals("quad9", reconciled.dnsProvider)
+        // No local match -> the deterministic synced id is kept.
+        assertEquals("m3u_file|tv.m3u|synced", reconcileLocalIds(listOf(pulled), emptyList()).single().id)
+    }
+
+    @Test
+    fun pullWithOnlyForeignOrMalformedRowsIsAnEmptyRemote() {
+        val foreign = listOf(
+            PlaylistRow(sourceType = "plex", name = "Future type"),      // unknown -> stays remote-only
+            PlaylistRow(sourceType = "m3u_url", name = "M3U"),           // malformed: no url
+            PlaylistRow(sourceType = "stalker", name = "Portal"),        // malformed: no portal/mac
+        )
+        // Zero usable rows => empty remote; never applied as an empty list over local state.
         assertTrue(usableRemoteAccounts(foreign).isEmpty())
 
         // Malformed xtream rows (missing identity columns) are skipped too.
@@ -358,16 +447,21 @@ class XtreamPlaylistModelTest {
     }
 
     @Test
-    fun fileSourcePlaylistsAreNotSyncPushed() {
-        // Sync is scoped to xtream rows (p_source_types ['xtream']); a file playlist's bytes aren't
-        // synced (spec §3.2). The push payload still only carries xtream identity, so a file row that
-        // slipped in serializes its source_type as-is but is filtered server-side by the scope.
+    fun fileSourcePlaylistsSyncMetadataOnlyNeverBytes() {
+        // A file playlist syncs as METADATA (file_name + options) so another device can offer
+        // "re-import here"; the file BYTES never leave the device (spec §3.2) — the payload has
+        // no url and an empty base_url.
         val fileAcc = m3uFileAccountFromForm(
             XtreamFormInput(serverUrl = "", username = "", password = "", name = "F", epgUrl = null, dnsProvider = "system", autoRefreshHours = 24, sourceType = SOURCE_TYPE_M3U_FILE, fileName = "l.m3u"),
             existingId = null, uniqueSuffix = 1L,
         )!!
         val params = playlistPushParams(profileId = 1, accounts = listOf(fileAcc))
-        assertEquals(listOf("xtream"), params["p_source_types"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertTrue("m3u_file" in params["p_source_types"]!!.jsonArray.map { it.jsonPrimitive.content })
+        val row = params["p_playlists"]!!.jsonArray.single().jsonObject
+        assertEquals("m3u_file", row["source_type"]!!.jsonPrimitive.content)
+        assertEquals("l.m3u", row["file_name"]!!.jsonPrimitive.content)
+        assertEquals("", row["base_url"]!!.jsonPrimitive.content)
+        assertFalse("url" in row)
     }
 
     @Test
