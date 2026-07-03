@@ -157,6 +157,40 @@ object XtreamClient {
 
     fun movieStreamUrl(acc: XtreamAccount, streamId: Int, ext: String = "mp4"): String = streamUrl(acc, "movie", streamId, ext.ifBlank { "mp4" })
     fun liveStreamUrl(acc: XtreamAccount, streamId: Int): String = streamUrl(acc, "live", streamId, "ts")
+
+    /**
+     * Catch-up (tv_archive) replay URL — XUI's standard timeshift path form.
+     * ponytail: start is UTC-derived; panels technically interpret it in the SERVER's
+     * timezone, so a mis-set panel replays offset — reading server_info.timezone and
+     * shifting is the upgrade path if providers surface that in practice.
+     */
+    fun liveTimeshiftUrl(acc: XtreamAccount, streamId: Int, startEpochMs: Long, durationMinutes: Int): String {
+        val base = acc.baseUrl.trimEnd('/')
+        val start = formatTimeshiftStart(startEpochMs)
+        return "$base/timeshift/${acc.username.encodeURLPathPart()}/${acc.password.encodeURLPathPart()}/$durationMinutes/$start/$streamId.ts"
+    }
+
+    /** Epoch ms -> "YYYY-MM-DD:HH-MM" in UTC (no kotlinx-datetime; Hinnant civil-from-days). */
+    private fun formatTimeshiftStart(epochMs: Long): String {
+        val totalSecs = epochMs / 1000
+        val days = totalSecs.floorDiv(86_400)
+        val secsOfDay = totalSecs.mod(86_400L)
+        // Hinnant civil_from_days
+        val z = days + 719_468
+        val era = (if (z >= 0) z else z - 146_096) / 146_097
+        val doe = z - era * 146_097
+        val yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365
+        val y = yoe + era * 400
+        val doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+        val mp = (5 * doy + 2) / 153
+        val d = doy - (153 * mp + 2) / 5 + 1
+        val m = if (mp < 10) mp + 3 else mp - 9
+        val year = if (m <= 2) y + 1 else y
+        val hh = secsOfDay / 3600
+        val mm = (secsOfDay % 3600) / 60
+        fun pad(n: Long) = n.toString().padStart(2, '0')
+        return "$year-${pad(m)}-${pad(d)}:${pad(hh)}-${pad(mm)}"
+    }
     fun episodeStreamUrl(acc: XtreamAccount, episodeId: String, ext: String = "mp4"): String {
         val base = acc.baseUrl.trimEnd('/')
         return "$base/series/${acc.username.encodeURLPathPart()}/${acc.password.encodeURLPathPart()}/$episodeId.${ext.ifBlank { "mp4" }}"

@@ -30,9 +30,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
 import com.nuvio.app.features.iptv.XtreamHubScreen
+import com.nuvio.app.features.radar.SportsHubScreen
 import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamLiveRecents
 import com.nuvio.app.features.iptv.XtreamRepository
+import com.nuvio.app.features.iptv.toMetaPreview
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -233,6 +235,7 @@ import nuvio.composeapp.generated.resources.compose_nav_profile
 import nuvio.composeapp.generated.resources.compose_nav_search
 import nuvio.composeapp.generated.resources.sidebar_library
 import nuvio.composeapp.generated.resources.sidebar_search
+import nuvio.composeapp.generated.resources.sidebar_sports
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.painterResource
@@ -350,6 +353,7 @@ enum class AppScreenTab {
     Search,
     Library,
     Iptv,
+    Sports,
     Settings,
 }
 
@@ -361,6 +365,7 @@ private fun AppScreenTab.toNativeNavigationTab(): NativeNavigationTab? = when (t
     AppScreenTab.Library -> NativeNavigationTab.Library
     AppScreenTab.Settings -> NativeNavigationTab.Settings
     AppScreenTab.Iptv -> null
+    AppScreenTab.Sports -> null
 }
 
 private fun NativeNavigationTab.toAppScreenTab(): AppScreenTab = when (this) {
@@ -808,6 +813,7 @@ private fun MainAppContent(
             }
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
             AppScreenTab.Iptv -> {}
+            AppScreenTab.Sports -> {}
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
         }
     }
@@ -1551,6 +1557,12 @@ private fun MainAppContent(
                                             contentDescription = "IPTV",
                                         )
                                         NavItem(
+                                            selected = selectedTab == AppScreenTab.Sports,
+                                            onClick = { handleRootTabClick(AppScreenTab.Sports) },
+                                            icon = Res.drawable.sidebar_sports,
+                                            contentDescription = "Sports",
+                                        )
+                                        NavItem(
                                             selected = selectedTab == AppScreenTab.Settings,
                                             onClick = { handleRootTabClick(AppScreenTab.Settings) },
                                         ) {
@@ -1602,6 +1614,7 @@ private fun MainAppContent(
                                             requestedSettingsPageName = "Iptv"
                                             selectedTab = AppScreenTab.Settings
                                         },
+                                        onOpenSportsTab = { selectedTab = AppScreenTab.Sports },
                                         onPlayLiveChannel = { contentId ->
                                             val item = XtreamItemRegistry.get(contentId)
                                             playLiveXtreamChannel(
@@ -3111,6 +3124,7 @@ private fun AppTabHost(
     onIptvAddProvider: () -> Unit = {},
     onPlayLiveChannel: (String) -> Unit = {},
     onIptvFavoriteChannel: (String) -> Unit = {},
+    onOpenSportsTab: () -> Unit = {},
     onLibraryPosterClick: ((LibraryItem) -> Unit)? = null,
     onLibraryPosterLongClick: ((LibraryItem, LibrarySection) -> Unit)? = null,
     onLibrarySectionViewAllClick: ((LibrarySection) -> Unit)? = null,
@@ -3152,6 +3166,9 @@ private fun AppTabHost(
                         onContinueWatchingLongPress = onContinueWatchingLongPress,
                         onFolderClick = onFolderClick,
                         onFirstCatalogRendered = onInitialHomeContentRendered,
+                        onOpenSportsTab = onOpenSportsTab,
+                        onPlaySportsChannel = onPlayLiveChannel,
+                        onAddIptvPlaylist = onIptvAddProvider,
                     )
                 }
 
@@ -3184,6 +3201,20 @@ private fun AppTabHost(
                         onPlayLiveChannel = onPlayLiveChannel,
                         onFavoriteLiveChannel = onIptvFavoriteChannel,
                         onAddProvider = onIptvAddProvider,
+                    )
+                }
+
+                AppScreenTab.Sports -> {
+                    SportsHubScreen(
+                        modifier = Modifier.fillMaxSize(),
+                        // Matched channels are registry-registered live ids — same play route
+                        // as the IPTV hub; the no-playlist CTA deep-links to IPTV settings.
+                        onPlayChannel = onPlayLiveChannel,
+                        onAddPlaylist = onIptvAddProvider,
+                        // Recordings are registry-registered VOD ids — native detail pipeline.
+                        onOpenRecording = { id ->
+                            XtreamItemRegistry.get(id)?.toMetaPreview()?.let { onPosterClick?.invoke(it) }
+                        },
                     )
                 }
 
@@ -3302,6 +3333,23 @@ private fun TabletFloatingTopBar(
                             contentDescription = "IPTV",
                             modifier = Modifier.size(NuvioTokens.Space.s18),
                             tint = if (selectedTab == AppScreenTab.Iptv) {
+                                tokens.colors.textPrimary
+                            } else {
+                                tokens.colors.textMuted
+                            },
+                        )
+                    },
+                )
+                TabletTopPillItem(
+                    label = "Sports",
+                    selected = selectedTab == AppScreenTab.Sports,
+                    onClick = { onTabSelected(AppScreenTab.Sports) },
+                    icon = {
+                        Icon(
+                            painter = painterResource(Res.drawable.sidebar_sports),
+                            contentDescription = "Sports",
+                            modifier = Modifier.size(NuvioTokens.Space.s18),
+                            tint = if (selectedTab == AppScreenTab.Sports) {
                                 tokens.colors.textPrimary
                             } else {
                                 tokens.colors.textMuted
