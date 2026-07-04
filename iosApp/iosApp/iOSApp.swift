@@ -14,6 +14,10 @@ struct iOSApp: App {
         )
         // Capture crashes (Mach exceptions, POSIX signals, NSExceptions) as $exception events.
         config.errorTrackingConfig.autoCapture = true
+        // Upload queued events quickly after launch: a crash queued by the previous
+        // run must ship before the user navigates back into whatever crashed
+        // (the default 30s starved uploads during crash-loops).
+        config.flushIntervalSeconds = 10
         PostHogSDK.shared.setup(config)
     }
 
