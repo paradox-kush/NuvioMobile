@@ -11,6 +11,13 @@ data class ProgressSyncRecord(
     val position: Long = 0L,
     val duration: Long = 0L,
     val lastWatched: Long = 0L,
+    // Display metadata synced alongside the position so a device that never played
+    // this content can still render its Continue Watching card.
+    val name: String = "",
+    val poster: String? = null,
+    val backdrop: String? = null,
+    val logo: String? = null,
+    val episodeTitle: String? = null,
 )
 
 data class ProgressDeltaEvent(
@@ -25,6 +32,11 @@ data class ProgressDeltaEvent(
     val position: Long = 0L,
     val duration: Long = 0L,
     val lastWatched: Long = 0L,
+    val name: String = "",
+    val poster: String? = null,
+    val backdrop: String? = null,
+    val logo: String? = null,
+    val episodeTitle: String? = null,
 )
 
 interface ProgressSyncAdapter {

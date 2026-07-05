@@ -517,13 +517,16 @@ object WatchProgressRepository {
             parentMetaId = contentId,
             parentMetaType = cached?.parentMetaType ?: contentType,
             videoId = videoId,
-            title = cached?.title?.takeIf { it.isNotBlank() } ?: contentId,
-            logo = cached?.logo,
-            poster = cached?.poster,
-            background = cached?.background,
+            // Local metadata first, then whatever the source device synced.
+            title = cached?.title?.takeIf { it.isNotBlank() }
+                ?: name.takeIf { it.isNotBlank() }
+                ?: contentId,
+            logo = cached?.logo ?: logo,
+            poster = cached?.poster ?: poster,
+            background = cached?.background ?: backdrop,
             seasonNumber = season,
             episodeNumber = episode,
-            episodeTitle = cached?.episodeTitle,
+            episodeTitle = cached?.episodeTitle ?: episodeTitle,
             episodeThumbnail = cached?.episodeThumbnail,
             lastPositionMs = position,
             durationMs = duration,
@@ -547,6 +550,11 @@ object WatchProgressRepository {
             position = position,
             duration = duration,
             lastWatched = lastWatched,
+            name = name,
+            poster = poster,
+            backdrop = backdrop,
+            logo = logo,
+            episodeTitle = episodeTitle,
         )
 
     private fun mergeWatchProgressEntriesPreservingUnsynced(
@@ -581,6 +589,9 @@ object WatchProgressRepository {
         lastSuccessfulPushEpochMs: Long,
         pullStartedEpochMs: Long,
     ): Boolean {
+        // Live progress is local-only (never pushed) — its absence from remote
+        // doesn't mean deletion on another device.
+        if (localEntry.isLiveChannelProgress()) return true
         val updatedAt = localEntry.lastUpdatedEpochMs
         val wasUpdatedAfterLastPush = lastSuccessfulPushEpochMs > 0L && updatedAt > lastSuccessfulPushEpochMs
         val wasUpdatedDuringPull = pullStartedEpochMs > 0L && updatedAt >= pullStartedEpochMs

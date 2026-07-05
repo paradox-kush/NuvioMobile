@@ -3,6 +3,7 @@ package com.nuvio.app.features.watching.sync
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.core.sync.putSyncOriginClientId
 import com.nuvio.app.features.watchprogress.WatchProgressEntry
+import com.nuvio.app.features.watchprogress.isLiveChannelProgress
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import kotlinx.serialization.SerialName
@@ -51,6 +52,11 @@ object SupabaseProgressSyncAdapter : ProgressSyncAdapter {
                 position = event.position,
                 duration = event.duration,
                 lastWatched = event.lastWatched,
+                name = event.name,
+                poster = event.poster,
+                backdrop = event.backdrop,
+                logo = event.logo,
+                episodeTitle = event.episodeTitle,
             )
         }
     }
@@ -81,6 +87,11 @@ object SupabaseProgressSyncAdapter : ProgressSyncAdapter {
                 position = entry.position,
                 duration = entry.duration,
                 lastWatched = entry.lastWatched,
+                name = entry.name,
+                poster = entry.poster,
+                backdrop = entry.backdrop,
+                logo = entry.logo,
+                episodeTitle = entry.episodeTitle,
             )
         }
     }
@@ -89,19 +100,29 @@ object SupabaseProgressSyncAdapter : ProgressSyncAdapter {
         profileId: Int,
         entries: Collection<WatchProgressEntry>,
     ) {
-        val syncEntries = entries.map { entry ->
-            WatchProgressSyncEntry(
-                contentId = entry.parentMetaId,
-                contentType = entry.contentType,
-                videoId = entry.videoId,
-                season = entry.seasonNumber,
-                episode = entry.episodeNumber,
-                position = entry.lastPositionMs,
-                duration = entry.durationMs,
-                lastWatched = entry.lastUpdatedEpochMs,
-                progressKey = progressKeyForEntry(entry),
-            )
-        }
+        val syncEntries = entries
+            // Live channels have no meaningful resume position — keep them out of remote sync.
+            .filterNot { it.isLiveChannelProgress() }
+            .map { entry ->
+                WatchProgressSyncEntry(
+                    contentId = entry.parentMetaId,
+                    contentType = entry.contentType,
+                    videoId = entry.videoId,
+                    season = entry.seasonNumber,
+                    episode = entry.episodeNumber,
+                    position = entry.lastPositionMs,
+                    duration = entry.durationMs,
+                    lastWatched = entry.lastUpdatedEpochMs,
+                    progressKey = progressKeyForEntry(entry),
+                    // Don't sync the raw-contentId title fallback as a display name.
+                    name = entry.title.takeIf { it.isNotBlank() && it != entry.parentMetaId }.orEmpty(),
+                    poster = entry.poster,
+                    backdrop = entry.background,
+                    logo = entry.logo,
+                    episodeTitle = entry.episodeTitle,
+                )
+            }
+        if (syncEntries.isEmpty()) return
         val params = buildJsonObject {
             put("p_profile_id", profileId)
             put("p_entries", json.encodeToJsonElement(syncEntries))
@@ -148,6 +169,12 @@ private data class WatchProgressSyncEntry(
     val duration: Long = 0,
     @SerialName("last_watched") val lastWatched: Long = 0,
     @SerialName("progress_key") val progressKey: String = "",
+    // Display metadata (defaults keep decoding compatible with a pre-migration backend)
+    val name: String = "",
+    val poster: String? = null,
+    val backdrop: String? = null,
+    val logo: String? = null,
+    @SerialName("episode_title") val episodeTitle: String? = null,
 )
 
 @Serializable
@@ -163,4 +190,10 @@ private data class WatchProgressDeltaSyncEntry(
     val position: Long = 0,
     val duration: Long = 0,
     @SerialName("last_watched") val lastWatched: Long = 0,
+    // Display metadata (defaults keep decoding compatible with a pre-migration backend)
+    val name: String = "",
+    val poster: String? = null,
+    val backdrop: String? = null,
+    val logo: String? = null,
+    @SerialName("episode_title") val episodeTitle: String? = null,
 )

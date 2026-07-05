@@ -89,6 +89,17 @@ object XtreamItemRegistry {
         return XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }?.name
     }
 
+    /**
+     * True when [contentId] is an xtream id whose account is no longer configured on this
+     * device (playlist edited/removed; entry synced from another device) — it can't resolve
+     * meta or streams anymore. Non-xtream ids are never orphaned.
+     */
+    fun isOrphaned(contentId: String): Boolean {
+        val parsed = parseId(contentId) ?: return false
+        runCatching { XtreamRepository.ensureLoaded() }
+        return XtreamRepository.uiState.value.accounts.none { it.id == parsed.accountId }
+    }
+
     /** The single direct StreamItem for a playable id, or null (series containers aren't directly playable). */
     fun streamItemFor(contentId: String): StreamItem? {
         val item = get(contentId) ?: return null

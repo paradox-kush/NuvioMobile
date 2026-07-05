@@ -348,6 +348,22 @@ class WatchProgressRulesTest {
         assertNull(parseReleaseDateToEpochMs("invalid-date"))
     }
 
+    @Test
+    fun `live channel progress never shows as continue watching`() {
+        val byType = entry(videoId = "ch-1").copy(contentType = "live")
+        val byXtreamId = entry(
+            videoId = "xtream:http://host|user:live:42",
+            parentMetaId = "xtream:http://host|user:live:42",
+        )
+
+        assertFalse(byType.shouldTreatAsInProgressForContinueWatching())
+        assertFalse(byXtreamId.shouldTreatAsInProgressForContinueWatching())
+        // Live entries survive remote merges (they are never pushed).
+        assertTrue(byType.isLiveChannelProgress())
+        assertTrue(byXtreamId.isLiveChannelProgress())
+        assertFalse(entry(videoId = "movie-1").isLiveChannelProgress())
+    }
+
     private fun entry(
         videoId: String,
         parentMetaId: String = videoId.substringBefore(':'),
