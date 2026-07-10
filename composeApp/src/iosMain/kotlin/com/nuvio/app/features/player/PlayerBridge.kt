@@ -20,6 +20,8 @@ interface NuvioPlayerBridge {
     fun seekTo(positionMs: Long)
     fun seekBy(offsetMs: Long)
     fun retry()
+    // Live streams must rejoin the live edge (reload) on foreground instead of unpausing.
+    fun setIsLiveStream(isLive: Boolean)
     fun updateNowPlayingMetadata(
         title: String,
         subtitle: String?,

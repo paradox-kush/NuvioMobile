@@ -11,6 +11,7 @@ import android.graphics.Typeface
 import android.os.Build
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.util.AttributeSet
+import android.view.SurfaceHolder
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.Composable
@@ -26,6 +27,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import kotlinx.coroutines.runBlocking
+import kotlin.concurrent.thread
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 import androidx.lifecycle.LifecycleEventObserver
@@ -148,6 +150,7 @@ actual fun PlatformPlayerSurface(
             sourceAudioUrl = sourceAudioUrl,
             sourceHeaders = sourceHeaders,
             externalSubtitles = externalSubtitles,
+            isLiveStream = forceLibmpvForLive,
             modifier = modifier,
             playWhenReady = playWhenReady,
             resizeMode = resizeMode,
@@ -752,6 +755,7 @@ private fun LibmpvPlayerSurface(
     sourceAudioUrl: String?,
     sourceHeaders: Map<String, String>,
     externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
+    isLiveStream: Boolean,
     modifier: Modifier,
     playWhenReady: Boolean,
     resizeMode: PlayerResizeMode,
@@ -923,6 +927,8 @@ private fun LibmpvPlayerSurface(
         },
         update = { view ->
             playerViewRef = view
+            view.isLiveStream = isLiveStream
+            view.playWhenReadyIntent = playWhenReady
             view.applyResizeMode(resizeMode)
         },
         onRelease = { view ->
@@ -950,6 +956,37 @@ private class NuvioLibmpvView(
     private var currentSourceAudioUrl: String? = null
     private var currentRequestHeaders: Map<String, String> = emptyMap()
     private var currentExternalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle> = emptyList()
+
+    // Set from the composable. Live streams must rejoin the live edge when the surface returns:
+    // a live stream paused in the background goes stale (the server keeps sending real time and
+    // eventually drops the socket), so unpausing plays out the old buffer, stalls, and lags live.
+    var isLiveStream: Boolean = false
+    var playWhenReadyIntent: Boolean = true
+    private var pendingLiveRejoin = false
+
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        // The surface dies exactly when the app leaves the foreground. Flag the rejoin here
+        // rather than in a lifecycle observer: BaseMPVView's vo teardown below can block the
+        // main thread on the mpv core while a live demuxer is stuck, which starves ON_STOP/
+        // ON_START dispatch entirely (seen in ANR traces).
+        if (isLiveStream && currentSourceUrl != null) {
+            pendingLiveRejoin = true
+        }
+        super.surfaceDestroyed(holder)
+    }
+
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        super.surfaceCreated(holder)
+        if (pendingLiveRejoin) {
+            pendingLiveRejoin = false
+            Log.i(TAG, "Rejoining live edge after background")
+            // Off the main thread: loadfile on a core stuck in a dead network read would
+            // otherwise block here (same mpv lock the teardown path hits).
+            thread {
+                runCatching { loadCurrentSource(playWhenReady = playWhenReadyIntent) }
+            }
+        }
+    }
 
     override fun initOptions() {
         setVo(videoOutput.mpvValue)

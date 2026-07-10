@@ -55,6 +55,7 @@ final class MPVPlayerBridgeImpl: NSObject, NuvioPlayerBridge {
     func seekTo(positionMs: Int64) { playerVC?.seekToMs(positionMs) }
     func seekBy(offsetMs: Int64) { playerVC?.seekByMs(offsetMs) }
     func retry() { playerVC?.retryPlayback() }
+    func setIsLiveStream(isLive: Bool) { ensurePlayerViewController().isLiveStream = isLive }
     func updateNowPlayingMetadata(
         title: String,
         subtitle: String?,
@@ -266,6 +267,7 @@ final class MPVPlayerViewController: UIViewController {
     private lazy var eventQueue = DispatchQueue(label: "mpv-events", qos: .userInitiated)
     private var recentPlaybackLogs: [String] = []
     private var activeRequestHeaders: [String: String] = [:]
+    var isLiveStream = false
 
     // Cached track lists
     var audioTracks: [TrackInfo] = []
@@ -518,6 +520,13 @@ final class MPVPlayerViewController: UIViewController {
     @objc private func enterForeground() {
         guard mpv != nil else { return }
         setStringProperty("vid", "auto")
+        // A live stream paused in the background goes stale (dead socket, old buffer):
+        // unpausing plays the leftover buffer then stalls. Reload to rejoin the live edge.
+        if isLiveStream, let path = getString("path") {
+            clearPlaybackError()
+            applyRequestHeaders(activeRequestHeaders)
+            command("loadfile", args: [path, "replace"])
+        }
         playPlayback()
     }
 
