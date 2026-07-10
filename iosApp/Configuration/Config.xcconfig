@@ -3,7 +3,7 @@
 TEAM_ID=
 
 PRODUCT_NAME=Tuvora
-PRODUCT_BUNDLE_IDENTIFIER=com.nuvio.app.Nuvio$(TEAM_ID)
+PRODUCT_BUNDLE_IDENTIFIER=com.tuvora.app.Tuvora$(TEAM_ID)
 
 // ComposeApp uses BundledSQLiteDriver — SQLite is compiled into the Kotlin framework, so the
 // app must NOT also link the system libsqlite3 (that would duplicate every sqlite3_* symbol).
