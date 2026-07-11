@@ -51,6 +51,23 @@ object StalkerProtocol {
     }
 
     /**
+     * Reduce whatever the user pasted as the portal URL to its origin (`scheme://host[:port]`), so the
+     * [ENDPOINT_CANDIDATES] can be appended cleanly. Users routinely paste the STB UI path instead of
+     * the API base — `http://host/c/`, `http://host/c/index.html`, `http://host/portal.php`, a trailing
+     * slash — and the `/c/`-style panels are then reached via the `/c/portal.php` + `/portal.php`
+     * candidates. A bare host (no scheme) defaults to http. Path/query/fragment are dropped.
+     */
+    fun normalizePortalBase(entered: String): String {
+        var s = entered.trim()
+        if (s.isEmpty()) return s
+        if (!s.startsWith("http://", ignoreCase = true) && !s.startsWith("https://", ignoreCase = true))
+            s = "http://$s"
+        val afterScheme = s.indexOf("://") + 3
+        val pathStart = s.indexOf('/', afterScheme)
+        return if (pathStart == -1) s else s.substring(0, pathStart)
+    }
+
+    /**
      * The Referer a MAG box sends is the portal's `.../c/` directory, derived from the resolved
      * endpoint path. [baseUrl] is scheme+host[:port] (no trailing slash); [endpointPath] is one of
      * [ENDPOINT_CANDIDATES]. Rule: take everything before the final path segment, drop a `/server`
