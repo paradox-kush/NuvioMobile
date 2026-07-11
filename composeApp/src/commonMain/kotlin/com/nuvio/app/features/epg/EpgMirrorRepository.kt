@@ -123,6 +123,9 @@ internal object EpgMirrorRepository {
                     for (slug in chosen) {
                         val want = idsBySlug[slug].orEmpty().minus(covered)
                         if (want.isEmpty()) continue
+                        // Feeds download from their ORIGIN (GitHub CDN etc.) — the backend
+                        // publishes pointers only, no bytes transit Supabase.
+                        val feedUrl = manifest.urlFor(slug) ?: continue
                         val seen = mutableSetOf<String>()
                         // The parser callback can't suspend, so rows for this feed collect
                         // here (window+mapped-filtered: bounded) and chunk-insert after.
@@ -135,7 +138,7 @@ internal object EpgMirrorRepository {
                             }
                         }
                         runCatching {
-                            httpStreamLines(feedUrl(base, manifest, slug), null, null) { line ->
+                            httpStreamLines(feedUrl, null, null) { line ->
                                 parser.feed(line); parser.feed("\n")
                             }
                             parser.finish()
@@ -208,8 +211,6 @@ internal object EpgMirrorRepository {
         return "$url/storage/v1/object/public/epg"
     }
 
-    private fun feedUrl(base: String, manifest: MirrorManifest, slug: String): String =
-        "$base/${manifest.files.firstOrNull { it.slug == slug && it.error == null }?.path ?: "$slug.xml.gz"}"
 
     /** GET + accumulate + parse. httpStreamLines transparently gunzips bare .gz bodies. */
     private suspend inline fun <reified T> fetchJson(url: String): T? = runCatching {
@@ -225,12 +226,14 @@ internal object EpgMirrorRepository {
         val generatedAt: String? = null,
         val files: List<MirrorFile> = emptyList(),
         val channelsIndexPath: String? = null,
-    )
+    ) {
+        fun urlFor(slug: String): String? = files.firstOrNull { it.slug == slug && it.error == null }?.url
+    }
 
     @Serializable
     private data class MirrorFile(
         val slug: String,
-        val path: String? = null,
+        val url: String? = null,
         val error: String? = null,
     )
 
