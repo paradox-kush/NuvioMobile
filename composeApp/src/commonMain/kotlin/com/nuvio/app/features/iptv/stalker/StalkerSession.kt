@@ -28,6 +28,9 @@ import kotlinx.serialization.json.contentOrNull
  */
 internal class StalkerSession(
     private val account: XtreamAccount,
+    // Injectable HTTP seam so the auth/retry logic is unit-testable with a fake portal; production
+    // uses the real platform GET (throws on non-2xx / blank body — that throw IS the stale signal).
+    private val httpGet: suspend (url: String, headers: Map<String, String>) -> String = ::httpGetTextWithHeaders,
 ) {
     private var token: String? = null
     private var resolvedEndpoint: String? = null   // e.g. "/portal.php"
@@ -53,10 +56,11 @@ internal class StalkerSession(
      */
     suspend fun request(params: Map<String, String>): JsonElement {
         ensureAuthenticated()
+        val staleToken = token
         val first = runCatching { rawRequest(params) }.getOrNull()?.jsOrNull()
         if (first != null) return first
         // Stale token / transient failure -> force a fresh handshake, then retry exactly once.
-        reauthenticate()
+        reauthenticate(staleToken)
         return rawRequest(params).jsOrNull()
             ?: error("Stalker portal returned no data for ${params["action"]}")
     }
@@ -74,8 +78,16 @@ internal class StalkerSession(
         }
     }
 
-    private suspend fun reauthenticate() {
+    /**
+     * Re-handshake ONCE for a stale [staleToken]. Single-flight like [ensureAuthenticated]: if another
+     * coroutine already refreshed the token while we waited on the lock, reuse theirs instead of
+     * handshaking again. Critical because a Stalker handshake OVERWRITES the MAC's token server-side —
+     * N concurrent browse calls all re-authing would rotate the token N times and invalidate each
+     * other's retry ("portal error" on the return-to-app path).
+     */
+    private suspend fun reauthenticate(staleToken: String?) {
         authMutex.withLock {
+            if (token != staleToken) return   // someone already refreshed — reuse it
             token = null
             doHandshakeAndProfile()
         }
@@ -161,9 +173,15 @@ internal class StalkerSession(
             if (!bearer.isNullOrEmpty()) put("Authorization", "Bearer $bearer")
         }
 
-        // httpGetTextWithHeaders throws on non-2xx / blank body — the caller treats that as a stale
-        // token and re-auths. A parseable-but-non-JSON body degrades to an empty object (same signal).
-        val body = httpGetTextWithHeaders(url, headers)
+        // httpGet throws on non-2xx / blank body — the caller treats that as a stale token and
+        // re-auths. A parseable-but-non-JSON body degrades to an empty object (same signal).
+        val body = httpGet(url, headers)
+        // A portal that rejects the STB identity replies HTTP 200 with the plain text "Authorization
+        // failed." (not JSON) — a stale token recovers via re-auth, but a persistent rejection would
+        // otherwise surface as a vague "no data". Throw an actionable error instead; it only becomes
+        // terminal when re-auth can't fix it (i.e. the MAC/Serial/Device ID is genuinely wrong).
+        if (body.contains(AUTH_FAILED_MARKER, ignoreCase = true))
+            error("Stalker portal rejected this device for ${account.name} — check the MAC address (and Serial / Device ID if the portal requires them)")
         return runCatching { JSON.parseToJsonElement(body) }.getOrDefault(JsonObject(emptyMap()))
     }
 
@@ -184,6 +202,8 @@ internal class StalkerSession(
     private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 
     companion object {
+        // The reference server's rejection sentinel: `echo 'Authorization failed.'; exit;`
+        private const val AUTH_FAILED_MARKER = "Authorization failed"
         private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
         private const val STB_VER =
             "ImageDescription: 0.2.18-r14-pub-250; ImageDate: Wed Aug 29 10:49:52 EEST 2018; PORTAL version: 5.6.1; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x58c"
