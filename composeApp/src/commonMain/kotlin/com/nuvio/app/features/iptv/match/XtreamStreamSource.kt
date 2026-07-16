@@ -133,8 +133,12 @@ internal object XtreamStreamSource {
                         val url = StalkerClient.resolveEpisodeUrl(acc, series.seriesId, s, e)
                             ?: return@mapNotNull null
                         StreamItem(
-                            name = "S${s}E${e}",
-                            title = series.name,  // the edition name so language cuts are tellable apart
+                            // The card renders `name` only (StreamItem.streamLabel) — `title` is never
+                            // drawn — so the portal's own name has to live here, exactly like the movie
+                            // branch. Stalker episode titles are generic ("Episode 7"), so the series
+                            // name is what actually distinguishes editions ("Breaking Bad (Hindi)").
+                            name = "${series.name} · S${s}E${e}",
+                            title = series.name,
                             url = url,
                             addonName = acc.name,
                             addonId = groupId(acc),
