@@ -72,15 +72,15 @@ object XtreamHubRepository {
     private fun showSection(accountId: String, section: XtreamHubSection) {
         if (accountFor(accountId)?.typeEnabled(section.contentKey) == false) {
             // Disabled content type: never fetched, nothing shown.
-            _uiState.update { it.copy(categories = emptyList(), loadingCategories = false) }
+            _uiState.update { it.copy(categories = emptyList(), loadingCategories = false, loadError = false) }
             return
         }
         val cached = cache[accountId to section]
         if (cached != null) {
-            _uiState.update { it.copy(categories = cached, loadingCategories = false) }
+            _uiState.update { it.copy(categories = cached, loadingCategories = false, loadError = false) }
             return
         }
-        _uiState.update { it.copy(categories = emptyList(), loadingCategories = true) }
+        _uiState.update { it.copy(categories = emptyList(), loadingCategories = true, loadError = false) }
         scope.launch { fetchCategoryList(accountId, section) }
     }
 
@@ -91,7 +91,14 @@ object XtreamHubRepository {
             XtreamHubSection.LIVE -> client.liveCategories(account)
             XtreamHubSection.MOVIES -> client.vodCategories(account)
             XtreamHubSection.SERIES -> client.seriesCategories(account)
-        }.getOrNull() ?: return  // keep any existing cache on a failed refresh
+        }.getOrNull() ?: run {
+            // Failed fetch: keep any warm cache, but if there's none the section would otherwise spin
+            // forever — surface an error so the user knows the portal is unreachable, not just slow.
+            if (isCurrent(accountId, section) && cache[accountId to section] == null) {
+                _uiState.update { it.copy(loadingCategories = false, loadError = true) }
+            }
+            return
+        }
         // Merge: carry over already-loaded items for categories that still exist.
         val previous = cache[accountId to section].orEmpty().associateBy { it.id }
         val merged = fresh.map { cat ->
@@ -100,7 +107,7 @@ object XtreamHubRepository {
         }
         cache[accountId to section] = merged
         if (isCurrent(accountId, section)) {
-            _uiState.update { it.copy(categories = merged, loadingCategories = false) }
+            _uiState.update { it.copy(categories = merged, loadingCategories = false, loadError = false) }
         }
     }
 

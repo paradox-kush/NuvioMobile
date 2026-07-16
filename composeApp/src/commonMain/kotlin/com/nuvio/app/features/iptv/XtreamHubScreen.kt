@@ -105,6 +105,7 @@ fun XtreamHubScreen(
 
         when {
             state.loadingCategories -> CenteredProgress()
+            state.loadError -> CenteredMessage("Couldn't reach this playlist. Check the portal is up and try again.")
             visibleCategories.isEmpty() -> CenteredMessage("Nothing here yet")
             else -> LazyColumn(
                 modifier = Modifier.fillMaxSize(),

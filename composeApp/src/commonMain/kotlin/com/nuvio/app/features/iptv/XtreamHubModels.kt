@@ -10,6 +10,9 @@ data class XtreamHubUiState(
     val section: XtreamHubSection = XtreamHubSection.LIVE,
     val categories: List<XtreamHubCategory> = emptyList(),
     val loadingCategories: Boolean = false,
+    // Non-null when the category-list fetch failed and there was no cache to fall back on — the UI
+    // shows this instead of spinning forever (dead portal / Cloudflare block / timeout).
+    val loadError: Boolean = false,
 )
 
 enum class XtreamHubSection { LIVE, MOVIES, SERIES }
