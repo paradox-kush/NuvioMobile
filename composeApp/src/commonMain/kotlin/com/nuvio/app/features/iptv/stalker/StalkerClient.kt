@@ -11,6 +11,7 @@ import com.nuvio.app.features.iptv.XtreamProgram
 import com.nuvio.app.features.iptv.XtreamSeriesDetail
 import com.nuvio.app.features.iptv.XtreamSeriesItem
 import com.nuvio.app.features.iptv.XtreamVodDetail
+import com.nuvio.app.features.trakt.TraktPlatformClock
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -47,6 +48,12 @@ object StalkerClient : IptvClient {
     private val liveCmds = mutableMapOf<String, String>()
     private val liveMutex = Mutex()
 
+    // The whole guide per account in ONE get_epg_info fetch, keyed by channel id (see [bulkEpg]).
+    private class EpgSnapshot(val byChannel: Map<Int, List<XtreamProgram>>, val fetchedAtMs: Long)
+    private val epgCache = mutableMapOf<String, EpgSnapshot>()
+    private val epgUnsupported = mutableSetOf<String>()
+    private val epgMutex = Mutex()
+
     /** Test seam: lets a test drive the whole client against a fake portal (StalkerRequestCountTest). */
     internal var sessionFactory: (XtreamAccount) -> StalkerSession = { StalkerSession(it) }
 
@@ -61,6 +68,8 @@ object StalkerClient : IptvClient {
         rowCache.keys.removeAll { it.startsWith("${acc.id}:") }
         liveCmds.keys.removeAll { it.startsWith("${acc.id}:") }
         liveCache.remove(acc.id)
+        epgCache.remove(acc.id)
+        epgUnsupported.remove(acc.id)
         sessionFactory(acc).also { sessions[acc.id] = Entry(it, fp) }
     }
 
@@ -249,23 +258,67 @@ object StalkerClient : IptvClient {
         )
     }
 
+    /**
+     * Now/next for one channel — served from the ONE bulk [epgSnapshot] fetch, not a request per
+     * channel. The hub calls this from a LaunchedEffect per tile, so the old per-channel
+     * `get_short_epg` meant a request for every tile scrolled into view (measured: 132 in one
+     * browse, the biggest single load left after get_all_channels).
+     */
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = runCatching {
+        bulkEpg(acc)?.let { return@runCatching it[streamId].orEmpty().take(limit) }
+        // Portal has no get_epg_info — fall back to the per-channel call.
         val js = sessionFor(acc).request(
             mapOf("type" to "itv", "action" to "get_short_epg", "ch_id" to streamId.toString(), "size" to limit.toString())
         )
         val list = (js as? JsonArray) ?: ((js as? JsonObject)?.get("data") as? JsonArray) ?: return@runCatching emptyList()
-        list.mapNotNull { it as? JsonObject }.map { p ->
-            val startMs = (p.long("start_timestamp") ?: 0L) * 1000
-            val endMs = (p.long("stop_timestamp") ?: 0L) * 1000
-            XtreamProgram(
-                title = p.str("name").orEmpty(),
-                description = p.str("descr").orEmpty(),
-                startMs = startMs,
-                endMs = endMs,
-                // nowPlaying is decided by the caller against the device clock; the portal also hints it.
-                nowPlaying = (p.int("mark_memo") ?: 0) == 0 && p === list.firstOrNull()
-            )
+        val rows = list.mapNotNull { it as? JsonObject }
+        rows.map { programOf(it, firstIsNow = it === rows.firstOrNull()) }
+    }
+
+    /**
+     * The WHOLE guide in ONE request (`get_epg_info&period=3` — 2.5MB, ~600 channels, 1s on a real
+     * portal), keyed by channel id. Null when the portal doesn't support it, so the caller degrades to
+     * the per-channel path. Re-fetched every [EPG_TTL_MS] because "now/next" advances.
+     *
+     * Note only channels that HAVE epg appear — a miss here means the portal has no guide for that
+     * channel, NOT that we should go ask per-channel (that's what caused the fan-out).
+     */
+    private suspend fun bulkEpg(acc: XtreamAccount): Map<Int, List<XtreamProgram>>? = epgMutex.withLock {
+        if (acc.id in epgUnsupported) return@withLock null
+        val now = TraktPlatformClock.nowEpochMs()
+        epgCache[acc.id]?.takeIf { now - it.fetchedAtMs < EPG_TTL_MS }?.let { return@withLock it.byChannel }
+        val js = runCatching {
+            sessionFor(acc).request(mapOf("type" to "itv", "action" to "get_epg_info", "period" to EPG_PERIOD_HOURS))
+        }.getOrNull()
+        val data = (js as? JsonObject)?.get("data") as? JsonObject
+        if (data.isNullOrEmpty()) {
+            epgUnsupported += acc.id   // don't retry the bulk call all session
+            return@withLock null
         }
+        val byChannel = buildMap<Int, List<XtreamProgram>> {
+            data.forEach { (chId, arr) ->
+                val id = chId.toIntOrNull() ?: return@forEach
+                val progs = (arr as? JsonArray)?.mapNotNull { it as? JsonObject }
+                    ?.map { programOf(it, nowMs = now) }.orEmpty()
+                if (progs.isNotEmpty()) put(id, progs)
+            }
+        }
+        epgCache[acc.id] = EpgSnapshot(byChannel, now)
+        byChannel
+    }
+
+    /** [nowMs] > 0 decides nowPlaying against the clock; else the portal's first-entry hint is used. */
+    private fun programOf(p: JsonObject, nowMs: Long = 0L, firstIsNow: Boolean = false): XtreamProgram {
+        val startMs = (p.long("start_timestamp") ?: 0L) * 1000
+        val endMs = (p.long("stop_timestamp") ?: 0L) * 1000
+        return XtreamProgram(
+            title = p.str("name").orEmpty(),
+            description = p.str("descr").orEmpty(),
+            startMs = startMs,
+            endMs = endMs,
+            nowPlaying = if (nowMs > 0) nowMs in startMs until endMs
+            else (p.int("mark_memo") ?: 0) == 0 && firstIsNow
+        )
     }
 
     // Sync stream URLs are placeholders (like M3U) — Stalker MUST create_link fresh at play time.
@@ -434,4 +487,9 @@ object StalkerClient : IptvClient {
     // because it's near-useless at portal scale (63k movies / 14 per page = 4,509 pages): it can only
     // ever cover the first slice, so let it fail fast instead of firing 200 requests to still miss.
     private const val FALLBACK_SCAN_ITEMS = 280
+
+    // get_epg_info window + how long a snapshot stays fresh. 3h covers now/next comfortably; the
+    // snapshot is re-fetched every 30 min so "now" keeps up.
+    private const val EPG_PERIOD_HOURS = "3"
+    private const val EPG_TTL_MS = 30 * 60 * 1000L
 }

@@ -106,6 +106,38 @@ class StalkerRequestCountTest {
     }
 
     @Test
+    fun `EPG for many channels is ONE bulk request, not one per channel`() = runBlocking {
+        val portal: suspend (String, Map<String, String>) -> String = { url, _ ->
+            val action = Regex("action=([^&]+)").find(url)?.groupValues?.get(1)
+            requests += "itv/$action"
+            when (action) {
+                "handshake" -> """{"js":{"token":"T"}}"""
+                "get_profile" -> """{"js":{}}"""
+                "get_epg_info" -> {
+                    // guide for channels 1..3 only — 4..6 legitimately have no EPG
+                    val ch = (1..3).joinToString(",") {
+                        """"$it":[{"name":"Now $it","descr":"d","start_timestamp":"1000","stop_timestamp":"2000"}]"""
+                    }
+                    """{"js":{"data":{$ch}}}"""
+                }
+                else -> """{"js":[]}"""
+            }
+        }
+        StalkerClient.sessionFactory = { StalkerSession(it, portal) }
+        val acc = account("rc-epg")
+
+        // The hub asks per tile — 6 channels, including 3 with no guide at all.
+        val got = (1..6).map { StalkerClient.shortEpg(acc, it, 4).getOrThrow() }
+        assertEquals("Now 1", got[0].first().title)
+        assertEquals(0, got[5].size)                                   // no guide -> empty, no request
+
+        assertEquals(1, requests.count { it == "itv/get_epg_info" })   // ONE bulk fetch
+        // The point: a channel with no guide must NOT fall back to a per-channel call, or the
+        // fan-out returns (measured 132 get_short_epg in a single real browse).
+        assertEquals(0, requests.count { it == "itv/get_short_epg" })
+    }
+
+    @Test
     fun `a VOD category row is capped, not paged to the end of the catalog`() = runBlocking {
         // A huge category: 100 pages available. The row must take its cap (70 = 5 pages) and stop —
         // the real portal has 63k movies at 14/page, and a poster row has no see-all.
