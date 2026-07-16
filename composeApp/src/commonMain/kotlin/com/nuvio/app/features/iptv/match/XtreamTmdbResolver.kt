@@ -1,6 +1,7 @@
 package com.nuvio.app.features.iptv.match
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM
 import com.nuvio.app.features.iptv.XtreamAccount
 import com.nuvio.app.features.iptv.XtreamClient
 import com.nuvio.app.features.tmdb.TmdbTitleBundle
@@ -63,7 +64,9 @@ internal object XtreamTmdbResolver {
      * devices that's minutes, which reads as "finding the movie takes forever".
      */
     fun warmUp(accounts: List<XtreamAccount>, startDelayMs: Long = 0L) {
-        accounts.filter { it.enabled }.forEach { acc ->
+        // Xtream only (mirrors NuvioTV): M3U/Stalker have no player_api bulk lists to index —
+        // a warm-up for them just burns a failed fetch into the build backoff.
+        accounts.filter { it.enabled && it.sourceType == SOURCE_TYPE_XTREAM }.forEach { acc ->
             buildScope.launch {
                 if (startDelayMs > 0) delay(startDelayMs)
                 ensureIndexed(acc, MatchKind.MOVIE)

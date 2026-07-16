@@ -233,9 +233,14 @@ object StreamsRepository {
 
         // Xtream IPTV as a stream source for TMDB content: each enabled account gets a
         // group; the TMDB->stream match runs per account (index + verify + cache).
+        // Xtream ONLY (mirrors NuvioTV): the match index builds from player_api bulk lists, which
+        // M3U and Stalker sources don't have — they'd just fail into backoff. Their content still
+        // plays via its own namespaced hybrid lane (registry ids).
         val xtreamTargets = if (type == "movie" || type == "series") {
             XtreamRepository.ensureLoaded()
-            XtreamRepository.uiState.value.accounts.filter { it.enabled }
+            XtreamRepository.uiState.value.accounts.filter {
+                it.enabled && it.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM
+            }
         } else {
             emptyList()
         }

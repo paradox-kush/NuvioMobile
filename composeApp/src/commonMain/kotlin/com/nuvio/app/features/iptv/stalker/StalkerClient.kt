@@ -96,34 +96,49 @@ object StalkerClient : IptvClient {
     }
 
     override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = runCatching {
-        orderedList(acc, "vod", categoryId).map { item ->
-            XtreamMovie(
-                streamId = item.int("id") ?: 0,
-                name = item.str("name").orEmpty(),
-                poster = (item.str("screenshot_uri") ?: item.str("cover"))?.takeIf { it.isNotBlank() }?.let { absolutize(acc, it) },
-                categoryId = item.str("category_id"),
-                rating = item.str("rating_imdb") ?: item.str("rating"),
-                streamUrl = "",
-                tmdb = null,
-                containerExtension = null
-            )
-        }.filter { it.streamId > 0 }
+        orderedList(acc, "vod", categoryId).map { movieOf(acc, it) }.filter { it.streamId > 0 }
     }
 
     override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = runCatching {
-        orderedList(acc, "series", categoryId).map { item ->
-            XtreamSeriesItem(
-                seriesId = item.int("id") ?: 0,
-                name = item.str("name").orEmpty(),
-                poster = (item.str("screenshot_uri") ?: item.str("cover"))?.takeIf { it.isNotBlank() }?.let { absolutize(acc, it) },
-                categoryId = item.str("category_id"),
-                plot = item.str("description"),
-                rating = item.str("rating_imdb") ?: item.str("rating"),
-                tmdb = null,
-                year = item.str("year")?.trim()?.take(4)?.toIntOrNull()
-            )
-        }.filter { it.seriesId > 0 }
+        orderedList(acc, "series", categoryId).map { seriesOf(acc, it) }.filter { it.seriesId > 0 }
     }
+
+    /**
+     * Portal-side VOD/series search via get_ordered_list's `search` param (what the MAG UI's own
+     * search uses) — Stalker content never enters the TMDB match index (those player_api builds
+     * just fail into backoff), so the search screen queries the portal directly. Never throws.
+     */
+    suspend fun searchMovies(acc: XtreamAccount, query: String): List<XtreamMovie> = runCatching {
+        orderedList(acc, "vod", null, search = query, maxItems = SEARCH_ITEMS)
+            .map { movieOf(acc, it) }.filter { it.streamId > 0 }
+    }.getOrDefault(emptyList())
+
+    suspend fun searchSeries(acc: XtreamAccount, query: String): List<XtreamSeriesItem> = runCatching {
+        orderedList(acc, "series", null, search = query, maxItems = SEARCH_ITEMS)
+            .map { seriesOf(acc, it) }.filter { it.seriesId > 0 }
+    }.getOrDefault(emptyList())
+
+    private fun movieOf(acc: XtreamAccount, item: JsonObject) = XtreamMovie(
+        streamId = item.int("id") ?: 0,
+        name = item.str("name").orEmpty(),
+        poster = (item.str("screenshot_uri") ?: item.str("cover"))?.takeIf { it.isNotBlank() }?.let { absolutize(acc, it) },
+        categoryId = item.str("category_id"),
+        rating = item.str("rating_imdb") ?: item.str("rating"),
+        streamUrl = "",
+        tmdb = null,
+        containerExtension = null
+    )
+
+    private fun seriesOf(acc: XtreamAccount, item: JsonObject) = XtreamSeriesItem(
+        seriesId = item.int("id") ?: 0,
+        name = item.str("name").orEmpty(),
+        poster = (item.str("screenshot_uri") ?: item.str("cover"))?.takeIf { it.isNotBlank() }?.let { absolutize(acc, it) },
+        categoryId = item.str("category_id"),
+        plot = item.str("description"),
+        rating = item.str("rating_imdb") ?: item.str("rating"),
+        tmdb = null,
+        year = item.str("year")?.trim()?.take(4)?.toIntOrNull()
+    )
 
     override suspend fun vodInfo(acc: XtreamAccount, vodId: Int): Result<XtreamVodDetail?> = runCatching {
         val row = orderedList(acc, "vod", null).firstOrNull { it.int("id") == vodId } ?: return@runCatching null
@@ -258,17 +273,24 @@ object StalkerClient : IptvClient {
 
     /** Paginated get_ordered_list across pages (js.total_items bounds the loop), capped so an "All"
      *  fetch can't run away — categories are the real browse path. */
-    private suspend fun orderedList(acc: XtreamAccount, type: String, categoryId: String?): List<JsonObject> {
+    private suspend fun orderedList(
+        acc: XtreamAccount,
+        type: String,
+        categoryId: String?,
+        search: String? = null,
+        maxItems: Int = MAX_ITEMS,
+    ): List<JsonObject> {
         val session = sessionFor(acc)
         val out = ArrayList<JsonObject>()
         var page = 1
         var total = Int.MAX_VALUE
-        while (out.size < total && out.size < MAX_ITEMS && page <= MAX_PAGES) {
+        while (out.size < total && out.size < maxItems && page <= MAX_PAGES) {
             val params = buildMap {
                 put("type", type)
                 put("action", "get_ordered_list")
                 put("genre", categoryId ?: "*")
                 if (type != "itv") put("category", categoryId ?: "*")
+                search?.let { put("search", it) }
                 put("p", page.toString())
                 put("sortby", "number")
             }
@@ -297,4 +319,5 @@ object StalkerClient : IptvClient {
 
     private const val MAX_ITEMS = 8000    // ponytail: categories are the browse path; don't slurp 26k
     private const val MAX_PAGES = 200
+    private const val SEARCH_ITEMS = 100  // search results: a page or two is plenty
 }

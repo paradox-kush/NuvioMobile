@@ -8,6 +8,7 @@ import com.nuvio.app.features.iptv.content.IptvContentKind
 import com.nuvio.app.features.iptv.match.MatchKind
 import com.nuvio.app.features.iptv.match.XtreamMatchIndex
 import com.nuvio.app.features.iptv.match.XtreamTmdbResolver
+import com.nuvio.app.features.iptv.stalker.StalkerClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -63,11 +64,18 @@ object XtreamSearchIndex {
             if (account.typeEnabled(CONTENT_TYPE_MOVIES) &&
                 account.categorySelections.forType(CONTENT_TYPE_MOVIES)?.isEmpty() != true
             ) {
-                if (account.sourceType == SOURCE_TYPE_M3U_URL) {
+                if (account.sourceType.isM3u()) {
                     // M3U catalog lives in the content DB (no TMDB match index) — substring the stored rows.
                     M3UClient.ensureIngested(account)
                     IptvContentDb.searchByName(account.id, IptvContentKind.VOD, q, PER_TYPE_CAP).forEach { row ->
                         val movie = XtreamMovie(row.sid, row.name, row.logo, row.categoryId, null, row.url, null, row.ext)
+                        XtreamItemRegistry.registerMovie(account.id, movie)
+                        movies += movie.toMetaPreview(account.id)
+                    }
+                } else if (account.sourceType == SOURCE_TYPE_STALKER) {
+                    // Stalker never enters the match index (its player_api builds fail into backoff,
+                    // mirroring NuvioTV) — search the portal directly via get_ordered_list&search=.
+                    StalkerClient.searchMovies(account, q).take(PER_TYPE_CAP).forEach { movie ->
                         XtreamItemRegistry.registerMovie(account.id, movie)
                         movies += movie.toMetaPreview(account.id)
                     }
@@ -93,10 +101,15 @@ object XtreamSearchIndex {
             if (account.typeEnabled(CONTENT_TYPE_SERIES) &&
                 account.categorySelections.forType(CONTENT_TYPE_SERIES)?.isEmpty() != true
             ) {
-                if (account.sourceType == SOURCE_TYPE_M3U_URL) {
+                if (account.sourceType.isM3u()) {
                     M3UClient.ensureIngested(account)
                     IptvContentDb.searchByName(account.id, IptvContentKind.SERIES, q, PER_TYPE_CAP).forEach { row ->
                         val seriesItem = XtreamSeriesItem(row.sid, row.name, row.logo, row.categoryId, null, null, null, null)
+                        XtreamItemRegistry.registerSeries(account.id, seriesItem)
+                        series += seriesItem.toMetaPreview(account.id)
+                    }
+                } else if (account.sourceType == SOURCE_TYPE_STALKER) {
+                    StalkerClient.searchSeries(account, q).take(PER_TYPE_CAP).forEach { seriesItem ->
                         XtreamItemRegistry.registerSeries(account.id, seriesItem)
                         series += seriesItem.toMetaPreview(account.id)
                     }
