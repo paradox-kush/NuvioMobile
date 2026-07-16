@@ -37,6 +37,13 @@ object StalkerClient : IptvClient {
     private val sessions = mutableMapOf<String, Entry>()
     private val sessionsMutex = Mutex()
 
+    // Browse-time rows keyed accountId:type:id — see [row]. This is what keeps play/detail from
+    // re-paging the whole catalog (the request storm that got a live portal to block us).
+    private val rowCache = mutableMapOf<String, JsonObject>()
+
+    /** Test seam: lets a test drive the whole client against a fake portal (StalkerRequestCountTest). */
+    internal var sessionFactory: (XtreamAccount) -> StalkerSession = { StalkerSession(it) }
+
     private suspend fun sessionFor(acc: XtreamAccount): StalkerSession = sessionsMutex.withLock {
         // Fingerprint mirrors NuvioTV's StalkerSessionManager: serial/device-id/login edits don't
         // change acc.id (it's portal+MAC), so a cached session must be dropped when they change or
@@ -44,7 +51,9 @@ object StalkerClient : IptvClient {
         val fp = fingerprint(acc)
         val existing = sessions[acc.id]
         if (existing != null && existing.fingerprint == fp) return@withLock existing.session
-        StalkerSession(acc).also { sessions[acc.id] = Entry(it, fp) }
+        // Config changed (or first use) — the cached rows/cmds belong to the OLD portal identity.
+        rowCache.keys.removeAll { it.startsWith("${acc.id}:") }
+        sessionFactory(acc).also { sessions[acc.id] = Entry(it, fp) }
     }
 
     private fun fingerprint(a: XtreamAccount): String =
@@ -141,7 +150,7 @@ object StalkerClient : IptvClient {
     )
 
     override suspend fun vodInfo(acc: XtreamAccount, vodId: Int): Result<XtreamVodDetail?> = runCatching {
-        val row = orderedList(acc, "vod", null).firstOrNull { it.int("id") == vodId } ?: return@runCatching null
+        val row = row(acc, "vod", vodId) ?: return@runCatching null
         XtreamVodDetail(
             name = row.str("name"),
             plot = row.str("description"),
@@ -160,7 +169,7 @@ object StalkerClient : IptvClient {
      * in season 1; grouping by a season field is the upgrade path if a portal ever provides one.
      */
     override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail?> = runCatching {
-        val row = orderedList(acc, "series", null).firstOrNull { it.int("id") == seriesId } ?: return@runCatching null
+        val row = row(acc, "series", seriesId) ?: return@runCatching null
         val episodeNums = (row["series"] as? JsonArray)
             ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.toIntOrNull() }
             .orEmpty()
@@ -251,13 +260,37 @@ object StalkerClient : IptvClient {
     // --- cmd lookup (browse-time cmd needed for create_link) ------------------
 
     private suspend fun liveCmd(acc: XtreamAccount, streamId: Int): String? =
-        orderedList(acc, "itv", null).firstOrNull { it.int("id") == streamId }?.str("cmd")
+        row(acc, "itv", streamId)?.str("cmd")
 
     private suspend fun vodCmd(acc: XtreamAccount, streamId: Int): String? =
-        orderedList(acc, "vod", null).firstOrNull { it.int("id") == streamId }?.str("cmd")
+        row(acc, "vod", streamId)?.str("cmd")
 
     private suspend fun seriesCmd(acc: XtreamAccount, seriesId: Int): String? =
-        orderedList(acc, "series", null).firstOrNull { it.int("id") == seriesId }?.str("cmd")
+        row(acc, "series", seriesId)?.str("cmd")
+
+    /**
+     * The browse row for ONE item. `get_ordered_list` already returns each item's `cmd` (the
+     * create_link input), so [orderedList] caches every row it sees and playing anything you browsed
+     * or searched costs ZERO extra requests.
+     *
+     * This used to re-page the ENTIRE catalog (genre=*, up to [MAX_PAGES] requests) per lookup — one
+     * tap = ~200 requests — which is what got a real portal's Cloudflare to block the whole IP. The
+     * cold-start miss (play straight from Library/Continue Watching) still scans, but stops at the
+     * match instead of slurping everything first.
+     */
+    private suspend fun row(acc: XtreamAccount, type: String, id: Int): JsonObject? =
+        rowCache[rowKey(acc.id, type, id)]
+            ?: orderedList(acc, type, null, stopWhen = { it.int("id") == id })
+                .firstOrNull { it.int("id") == id }
+
+    private fun rowKey(accId: String, type: String, id: Int) = "$accId:$type:$id"
+
+    private fun cacheRows(accId: String, type: String, rows: List<JsonObject>) {
+        // ponytail: crude cap, not an LRU — a full catalog is ~26k rows and we only need what was
+        // actually browsed. Swap in an LRU only if this ever shows up in a memory profile.
+        if (rowCache.size > MAX_CACHED_ROWS) rowCache.clear()
+        rows.forEach { r -> r.int("id")?.let { rowCache[rowKey(accId, type, it)] = r } }
+    }
 
     // --- request helpers ------------------------------------------------------
 
@@ -279,6 +312,7 @@ object StalkerClient : IptvClient {
         categoryId: String?,
         search: String? = null,
         maxItems: Int = MAX_ITEMS,
+        stopWhen: ((JsonObject) -> Boolean)? = null,
     ): List<JsonObject> {
         val session = sessionFor(acc)
         val out = ArrayList<JsonObject>()
@@ -298,7 +332,11 @@ object StalkerClient : IptvClient {
             total = obj.int("total_items") ?: obj.int("max_page_items")?.let { it * MAX_PAGES } ?: out.size
             val data = obj["data"] as? JsonArray ?: break
             if (data.isEmpty()) break
-            data.mapNotNullTo(out) { it as? JsonObject }
+            val rows = data.mapNotNull { it as? JsonObject }
+            // Every row carries its `cmd` — keep them so play/detail never re-pages to find one.
+            cacheRows(acc.id, type, rows)
+            out += rows
+            if (stopWhen != null && rows.any(stopWhen)) break   // found the target — stop paging
             page++
         }
         return out
@@ -320,4 +358,5 @@ object StalkerClient : IptvClient {
     private const val MAX_ITEMS = 8000    // ponytail: categories are the browse path; don't slurp 26k
     private const val MAX_PAGES = 200
     private const val SEARCH_ITEMS = 100  // search results: a page or two is plenty
+    private const val MAX_CACHED_ROWS = 10_000
 }
