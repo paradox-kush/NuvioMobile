@@ -54,6 +54,10 @@ object StalkerClient : IptvClient {
     private val epgUnsupported = mutableSetOf<String>()
     private val epgMutex = Mutex()
 
+    // Season rows per series (one movie_id=<id> request), keyed accountId:seriesId — see [seasonsOf].
+    private val seasonCache = mutableMapOf<String, List<StalkerSeason>>()
+    private val seasonMutex = Mutex()
+
     /** Test seam: lets a test drive the whole client against a fake portal (StalkerRequestCountTest). */
     internal var sessionFactory: (XtreamAccount) -> StalkerSession = { StalkerSession(it) }
 
@@ -70,6 +74,7 @@ object StalkerClient : IptvClient {
         liveCache.remove(acc.id)
         epgCache.remove(acc.id)
         epgUnsupported.remove(acc.id)
+        seasonCache.keys.removeAll { it.startsWith("${acc.id}:") }
         sessionFactory(acc).also { sessions[acc.id] = Entry(it, fp) }
     }
 
@@ -223,28 +228,31 @@ object StalkerClient : IptvClient {
     }
 
     /**
-     * Series detail incl. episode list. Portals have no get_series_info, so we re-read the series row:
-     * it carries a `series` array of episode numbers; each episode plays via create_link on the series
-     * cmd with `series={n}`. ponytail: seasons aren't modelled by these portals (flat list) — all land
-     * in season 1; grouping by a season field is the upgrade path if a portal ever provides one.
+     * Series detail incl. episode list. Portals have no get_series_info; a series is a two-level tree:
+     * the top-level row is just a container (its own `series` array is EMPTY), and the real episodes
+     * hang off SEASON rows fetched with `movie_id=<seriesId>`.
+     *
+     * We used to read the episode list off the top-level row, which is always empty — so every Stalker
+     * series showed zero episodes. Seasons ARE modelled (verified on a real portal: Breaking Bad
+     * returns Season 2..5 rows, each carrying its own episode numbers + cmd).
      */
     override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail?> = runCatching {
         val row = row(acc, "series", seriesId) ?: return@runCatching null
-        val episodeNums = (row["series"] as? JsonArray)
-            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.toIntOrNull() }
-            .orEmpty()
-        val episodes = episodeNums.sorted().map { n ->
-            XtreamEpisode(
-                // Encodes seriesId + episode so the play seam can rebuild the create_link cmd. Uses '_'
-                // (both are ints) — NOT ':', which is the registry content-id delimiter parseId splits on.
-                episodeId = "${seriesId}_$n",
-                season = 1,
-                episodeNum = n,
-                title = "Episode $n",
-                plot = null,
-                still = null,
-                containerExtension = null
-            )
+        val episodes = seasonsOf(acc, seriesId).flatMap { season ->
+            season.episodeNums.map { n ->
+                XtreamEpisode(
+                    // Encodes seriesId + season + episode so the play seam can rebuild the create_link
+                    // cmd. Uses '_' (all ints) — NOT ':', the registry content-id delimiter parseId
+                    // splits on. Old 2-part ids (no season) still parse; see MetaDetailsRepository.
+                    episodeId = "${seriesId}_${season.number}_$n",
+                    season = season.number,
+                    episodeNum = n,
+                    title = "Episode $n",
+                    plot = null,
+                    still = null,
+                    containerExtension = null
+                )
+            }
         }
         XtreamSeriesDetail(
             name = row.str("name"),
@@ -340,10 +348,49 @@ object StalkerClient : IptvClient {
         return createLink(acc, "vod", cmd)
     }
 
-    suspend fun resolveEpisodeUrl(acc: XtreamAccount, seriesId: Int, episodeNum: Int, nameHint: String? = null): String? {
-        val cmd = seriesCmd(acc, seriesId, nameHint) ?: return null
-        return createLink(acc, "vod", cmd, extraParams = mapOf("series" to episodeNum.toString()))
+    /**
+     * Play one episode. The create_link cmd belongs to the SEASON row (it decodes to
+     * `{"type":"series","series_id":536,"season_num":2}`), and the episode is passed as `series={n}` —
+     * NOT the top-level series row, whose cmd is empty. [season] null = an old 2-part episode id from
+     * before seasons were modelled; fall back to the first season we find.
+     */
+    suspend fun resolveEpisodeUrl(acc: XtreamAccount, seriesId: Int, season: Int?, episodeNum: Int): String? {
+        val seasons = seasonsOf(acc, seriesId)
+        val target = (season?.let { s -> seasons.firstOrNull { it.number == s } } ?: seasons.firstOrNull())
+            ?: return null
+        return createLink(acc, "vod", target.cmd, extraParams = mapOf("series" to episodeNum.toString()))
     }
+
+    private class StalkerSeason(val number: Int, val cmd: String, val episodeNums: List<Int>)
+
+    /**
+     * The season rows for a series (`movie_id=<seriesId>`), each with its own create_link cmd and
+     * episode numbers. One request, cached for the session — a series' seasons don't change mid-browse.
+     */
+    private suspend fun seasonsOf(acc: XtreamAccount, seriesId: Int): List<StalkerSeason> =
+        seasonMutex.withLock {
+            seasonCache["${acc.id}:$seriesId"]?.let { return@withLock it }
+            val js = runCatching {
+                sessionFor(acc).request(
+                    mapOf("type" to "series", "action" to "get_ordered_list",
+                        "movie_id" to seriesId.toString(), "p" to "1")
+                )
+            }.getOrNull()
+            val rows = ((js as? JsonObject)?.get("data") as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
+            val seasons = rows.mapNotNull { r ->
+                val cmd = r.str("cmd")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                // id is "<seriesId>:<season>"; the name ("Season 2") is the fallback.
+                val num = r.str("id")?.substringAfter(':', "")?.trim()?.toIntOrNull()
+                    ?: SEASON_NAME.find(r.str("name").orEmpty())?.groupValues?.get(1)?.toIntOrNull()
+                    ?: return@mapNotNull null
+                val eps = (r["series"] as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.toIntOrNull() }
+                    ?.sorted().orEmpty()
+                StalkerSeason(num, cmd, eps)
+            }.sortedBy { it.number }
+            if (seasons.isNotEmpty()) seasonCache["${acc.id}:$seriesId"] = seasons
+            seasons
+        }
 
     private suspend fun createLink(
         acc: XtreamAccount,
@@ -492,4 +539,5 @@ object StalkerClient : IptvClient {
     // snapshot is re-fetched every 30 min so "now" keeps up.
     private const val EPG_PERIOD_HOURS = "3"
     private const val EPG_TTL_MS = 30 * 60 * 1000L
+    private val SEASON_NAME = Regex("""season\s*(\d+)""", RegexOption.IGNORE_CASE)
 }

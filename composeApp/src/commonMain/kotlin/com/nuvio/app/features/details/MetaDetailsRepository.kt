@@ -666,10 +666,14 @@ object MetaDetailsRepository {
             val url = when (parsed.kind) {
                 XtreamKind.VOD -> parsed.id.toIntOrNull()?.let { stalker.resolveMovieUrl(account, it, existing?.name) }
                 XtreamKind.EPISODE -> {
+                    // "{seriesId}_{season}_{episode}"; a legacy 2-part id has no season -> null.
                     val parts = parsed.id.split("_")
                     val seriesId = parts.getOrNull(0)?.toIntOrNull()
-                    val episodeNum = parts.getOrNull(1)?.toIntOrNull()
-                    if (seriesId != null && episodeNum != null) stalker.resolveEpisodeUrl(account, seriesId, episodeNum, existing?.name) else null
+                    val season = if (parts.size >= 3) parts.getOrNull(1)?.toIntOrNull() else null
+                    val episodeNum = (if (parts.size >= 3) parts.getOrNull(2) else parts.getOrNull(1))?.toIntOrNull()
+                    if (seriesId != null && episodeNum != null) {
+                        stalker.resolveEpisodeUrl(account, seriesId, season, episodeNum)
+                    } else null
                 }
                 else -> null
             } ?: return false
