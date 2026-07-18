@@ -11,6 +11,7 @@ data class ProgressSyncRecord(
     val position: Long = 0L,
     val duration: Long = 0L,
     val lastWatched: Long = 0L,
+    val progressKey: String = "",
     // Display metadata synced alongside the position so a device that never played
     // this content can still render its Continue Watching card.
     val name: String = "",
@@ -24,9 +25,9 @@ data class ProgressDeltaEvent(
     val eventId: Long,
     val operation: String,
     val progressKey: String,
-    val contentId: String,
-    val contentType: String,
-    val videoId: String,
+    val contentId: String = "",
+    val contentType: String = "",
+    val videoId: String = "",
     val season: Int? = null,
     val episode: Int? = null,
     val position: Long = 0L,

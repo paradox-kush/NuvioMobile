@@ -15,6 +15,9 @@ data class RawHttpResponse(
     val headers: Map<String, String>,
 )
 
+/** Default safety limit for generic and plugin-provided HTTP responses. */
+internal const val DefaultRawHttpResponseMaxBytes = 1024 * 1024
+
 /**
  * GETs [url] as text. [dnsProvider] (P3) selects a per-playlist DNS-over-HTTPS resolver on Android
  * (values: system|cloudflare|google|mullvad|quad9|dnssb; null/"system" = the platform resolver).
@@ -42,6 +45,7 @@ expect suspend fun httpRequestRaw(
     headers: Map<String, String>,
     body: String,
     followRedirects: Boolean = true,
+    maxResponseBodyBytes: Int = DefaultRawHttpResponseMaxBytes,
 ): RawHttpResponse
 
 /**

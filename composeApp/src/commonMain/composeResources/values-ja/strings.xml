@@ -38,6 +38,8 @@
     <string name="addons_appstore_input_placeholder">サーバーURL</string>
     <string name="addons_appstore_install_button">追加</string>
     <string name="addons_empty_subtitle">マニフェストURLを追加して、カタログ・メタデータ・ストリーム・字幕をTuvoraに読み込みましょう。</string>
+    <string name="store_empty_unavailable_title">まだ何もありません</string>
+    <string name="store_empty_unavailable_message">現在のアドオンには、ここに表示できるものがまだありません。</string>
     <string name="addons_empty_title">アドオンがありません</string>
     <string name="addons_error_enter_url">アドオンのURLを入力してください。</string>
     <string name="addons_input_placeholder">アドオンURL</string>
@@ -442,7 +444,9 @@
     <string name="compose_settings_root_check_updates_description">最新リリースをダウンロード</string>
     <string name="compose_settings_root_check_updates_title">アップデートを確認</string>
     <string name="compose_settings_root_content_discovery_description">アドオンと探索ソースを管理</string>
+    <string name="compose_settings_root_content_discovery_description_appstore">アドオンを管理して、Tuvoraに表示する内容を選べます。</string>
     <string name="compose_settings_root_downloads_description">ダウンロードした映画とエピソードを管理</string>
+    <string name="compose_settings_root_downloads_description_appstore">このデバイスに保存した項目を管理します。</string>
     <string name="compose_settings_root_downloads_title">ダウンロード</string>
     <string name="compose_settings_root_general_section">一般</string>
     <string name="compose_settings_root_integrations_description">利用可能な連携を管理</string>
@@ -638,7 +642,7 @@
     <string name="settings_content_discovery_section_home">ホーム</string>
     <string name="settings_content_discovery_section_sources">ソース</string>
     <string name="settings_content_discovery_addons_description">コンテンツソースのインストール・削除・更新・並べ替え</string>
-    <string name="settings_content_discovery_addons_description_appstore">個人メディアソースを接続し、自分専用ライブラリへのアクセスを管理します。</string>
+    <string name="settings_content_discovery_addons_description_appstore">Tuvoraで使うアドオンを追加・管理します。</string>
     <string name="settings_content_discovery_plugins_description">JavaScriptスクレイパーリポジトリのインストールと内部テスト</string>
     <string name="settings_content_discovery_homescreen_description">ホームレイアウト・コンテンツ表示・ポスターの動作を調整</string>
     <string name="settings_content_discovery_meta_screen_description">詳細画面とエピソード画面の設定</string>

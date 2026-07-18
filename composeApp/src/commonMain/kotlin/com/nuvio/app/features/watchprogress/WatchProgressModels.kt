@@ -53,6 +53,8 @@ data class WatchProgressEntry(
     val isCompleted: Boolean = false,
     val progressPercent: Float? = null,
     val source: String = WatchProgressSourceLocal,
+    /** Stable server/storage identity. [videoId] remains the playback identity. */
+    val progressKey: String? = null,
 ) {
     val normalizedProgressPercent: Float?
         get() = progressPercent?.coerceIn(0f, 100f)
@@ -82,10 +84,11 @@ data class WatchProgressEntry(
 
     fun normalizedCompletion(): WatchProgressEntry {
         val completed = isEffectivelyCompleted
-        val normalizedPositionMs = when {
-            completed && durationMs > 0L -> durationMs
-            else -> lastPositionMs.coerceAtLeast(0L)
-        }
+        // Preserve the upstream position. Completion is a state derived at the
+        // 90% threshold, not evidence that playback reached the exact duration.
+        // Rewriting it to duration made a pulled 94% row oscillate between 94%
+        // and 100% across reloads.
+        val normalizedPositionMs = lastPositionMs.coerceAtLeast(0L)
         val normalizedPercent = when {
             normalizedProgressPercent != null -> normalizedProgressPercent
             completed && durationMs <= 0L -> 100f
@@ -124,8 +127,35 @@ data class WatchProgressUiState(
     val entries: List<WatchProgressEntry> = emptyList(),
     val hasLoadedRemoteProgress: Boolean = false,
 ) {
+    val byProgressKey: Map<String, WatchProgressEntry>
+        get() = entries.newestByProgressKey()
+
+    /** Secondary compatibility lookup; multiple server rows may share a video id. */
     val byVideoId: Map<String, WatchProgressEntry>
-        get() = entries.associateBy { it.videoId }
+        get() = entries
+            .groupBy(WatchProgressEntry::videoId)
+            .mapNotNull { (videoId, candidates) ->
+                candidates.resolveProgressForVideo(videoId)?.let { entry -> videoId to entry }
+            }
+            .toMap()
+
+    fun byVideoIdForContent(parentMetaId: String): Map<String, WatchProgressEntry> =
+        entries
+            .filter { entry -> entry.parentMetaId == parentMetaId }
+            .groupBy(WatchProgressEntry::videoId)
+            .mapValues { (_, candidates) -> candidates.maxWith(watchProgressEntryFreshnessComparator) }
+
+    fun progressForVideo(
+        videoId: String,
+        parentMetaId: String? = null,
+        seasonNumber: Int? = null,
+        episodeNumber: Int? = null,
+    ): WatchProgressEntry? = entries.resolveProgressForVideo(
+        videoId = videoId,
+        parentMetaId = parentMetaId,
+        seasonNumber = seasonNumber,
+        episodeNumber = episodeNumber,
+    )
 
     val continueWatchingEntries: List<WatchProgressEntry>
         get() = entries.continueWatchingEntries(limit = ContinueWatchingLimit)
@@ -206,13 +236,15 @@ internal fun nextUpDismissKey(
 
 internal fun WatchProgressEntry.toContinueWatchingItem(): ContinueWatchingItem {
     val normalizedEntry = normalizedCompletion()
-    val cloudPosterUrl = normalizedEntry.cloudLibraryPosterFallbackUrl()
+    val cloudPosterUrl = normalizedEntry.cloudLibraryPosterFallbackUrl().nonBlankOrNull()
     // ponytail: an Xtream movie's persisted poster can be null (direct-play never enriched it) —
     // fall back to the in-memory registry poster so Continue Watching shows art, not an empty frame.
     val xtreamPoster = if (normalizedEntry.poster.isNullOrBlank()) {
         XtreamItemRegistry.get(normalizedEntry.videoId)?.let { it.poster ?: it.logo }
     } else null
-    val effectivePoster = normalizedEntry.poster ?: xtreamPoster
+    val resolvedPoster = normalizedEntry.poster.nonBlankOrNull() ?: xtreamPoster.nonBlankOrNull() ?: cloudPosterUrl
+    val resolvedBackground = normalizedEntry.background.nonBlankOrNull()
+    val resolvedEpisodeThumbnail = normalizedEntry.episodeThumbnail.nonBlankOrNull()
     val explicitResumeProgressFraction = normalizedEntry.normalizedProgressPercent
         ?.takeIf { durationMs <= 0L && it > 0f }
         ?.let { explicitPercent -> (explicitPercent / 100f).coerceIn(0f, 1f) }
@@ -227,15 +259,15 @@ internal fun WatchProgressEntry.toContinueWatchingItem(): ContinueWatchingItem {
             episodeNumber = normalizedEntry.episodeNumber,
             episodeTitle = normalizedEntry.episodeTitle,
         ),
-        imageUrl = normalizedEntry.episodeThumbnail ?: normalizedEntry.background ?: effectivePoster ?: cloudPosterUrl,
-        logo = normalizedEntry.logo,
-        poster = effectivePoster ?: cloudPosterUrl,
-        background = normalizedEntry.background,
+        imageUrl = resolvedEpisodeThumbnail ?: resolvedBackground ?: resolvedPoster,
+        logo = normalizedEntry.logo.nonBlankOrNull(),
+        poster = resolvedPoster,
+        background = resolvedBackground,
         seasonNumber = normalizedEntry.seasonNumber,
         episodeNumber = normalizedEntry.episodeNumber,
-        episodeTitle = normalizedEntry.episodeTitle,
-        episodeThumbnail = normalizedEntry.episodeThumbnail,
-        pauseDescription = normalizedEntry.pauseDescription,
+        episodeTitle = normalizedEntry.episodeTitle.nonBlankOrNull(),
+        episodeThumbnail = resolvedEpisodeThumbnail,
+        pauseDescription = normalizedEntry.pauseDescription.nonBlankOrNull(),
         released = null,
         isNextUp = false,
         nextUpSeedSeasonNumber = null,
@@ -268,6 +300,10 @@ internal fun WatchProgressEntry.toUpNextContinueWatchingItem(
         nextSeasonNumber = nextEpisode.season,
         releasedIso = nextEpisode.released,
     )
+    val resolvedPoster = poster.nonBlankOrNull()
+    val resolvedBackground = background.nonBlankOrNull()
+    val resolvedCurrentEpisodeThumbnail = episodeThumbnail.nonBlankOrNull()
+    val resolvedNextEpisodeThumbnail = nextEpisode.thumbnail.nonBlankOrNull()
     return ContinueWatchingItem(
         parentMetaId = parentMetaId,
         parentMetaType = parentMetaType,
@@ -283,16 +319,19 @@ internal fun WatchProgressEntry.toUpNextContinueWatchingItem(
             episodeNumber = nextEpisode.episode,
             episodeTitle = nextEpisode.title,
         ),
-        imageUrl = nextEpisode.thumbnail ?: episodeThumbnail ?: background ?: poster,
-        logo = logo,
-        poster = poster,
-        background = background,
+        imageUrl = resolvedNextEpisodeThumbnail
+            ?: resolvedCurrentEpisodeThumbnail
+            ?: resolvedBackground
+            ?: resolvedPoster,
+        logo = logo.nonBlankOrNull(),
+        poster = resolvedPoster,
+        background = resolvedBackground,
         seasonNumber = nextEpisode.season,
         episodeNumber = nextEpisode.episode,
-        episodeTitle = nextEpisode.title,
-        episodeThumbnail = nextEpisode.thumbnail,
-        pauseDescription = nextEpisode.overview,
-        released = nextEpisode.released,
+        episodeTitle = nextEpisode.title.nonBlankOrNull(),
+        episodeThumbnail = resolvedNextEpisodeThumbnail,
+        pauseDescription = nextEpisode.overview.nonBlankOrNull(),
+        released = nextEpisode.released.nonBlankOrNull(),
         isNextUp = true,
         nextUpSeedSeasonNumber = seasonNumber,
         nextUpSeedEpisodeNumber = episodeNumber,
@@ -304,6 +343,8 @@ internal fun WatchProgressEntry.toUpNextContinueWatchingItem(
         isNewSeasonRelease = alertState.isNewSeasonRelease,
     )
 }
+
+private fun String?.nonBlankOrNull(): String? = this?.takeIf { it.isNotBlank() }
 
 internal fun buildContinueWatchingEpisodeSubtitle(
     seasonNumber: Int?,

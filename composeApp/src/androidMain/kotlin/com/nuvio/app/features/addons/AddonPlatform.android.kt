@@ -93,8 +93,11 @@ private val addonHttpClient = OkHttpClient.Builder()
     .build()
 
 private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
-private const val maxRawResponseBodyBytes = 1024 * 1024
-private const val truncationSuffix = "\n...[truncated]"
+
+private data class LimitedReadResult(
+    val bytes: ByteArray,
+    val truncated: Boolean,
+)
 
 private fun requestAllowsBody(method: String): Boolean =
     when (method.uppercase()) {
@@ -109,11 +112,6 @@ private fun Map<String, String>.withoutAcceptEncoding(): Map<String, String> =
 
 private fun Map<String, String>.getHeaderIgnoreCase(name: String): String? =
     entries.firstOrNull { (key, _) -> key.equals(name, ignoreCase = true) }?.value
-
-private data class LimitedReadResult(
-    val bytes: ByteArray,
-    val truncated: Boolean,
-)
 
 private fun readAtMostBytes(stream: InputStream, maxBytes: Int): LimitedReadResult {
     val out = ByteArrayOutputStream(minOf(maxBytes, 16 * 1024))
@@ -135,11 +133,11 @@ private fun readAtMostBytes(stream: InputStream, maxBytes: Int): LimitedReadResu
     return LimitedReadResult(out.toByteArray(), truncated)
 }
 
-private fun readResponseBodyLimited(body: ResponseBody?): String {
+private fun readResponseBodyLimited(body: ResponseBody?, maxBytes: Int): String {
     if (body == null) return ""
     val charset = body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
     val readResult = body.byteStream().use { stream ->
-        readAtMostBytes(stream, maxRawResponseBodyBytes)
+        readAtMostBytes(stream, maxBytes.coerceAtLeast(0))
     }
 
     val decoded = try {
@@ -148,11 +146,7 @@ private fun readResponseBodyLimited(body: ResponseBody?): String {
         String(readResult.bytes, Charsets.UTF_8)
     }
 
-    return if (readResult.truncated) {
-        decoded + truncationSuffix
-    } else {
-        decoded
-    }
+    return if (readResult.truncated) "$decoded\n...[truncated]" else decoded
 }
 
 private fun readResponseBody(body: ResponseBody?): String {
@@ -260,6 +254,7 @@ actual suspend fun httpRequestRaw(
     headers: Map<String, String>,
     body: String,
     followRedirects: Boolean,
+    maxResponseBodyBytes: Int,
 ): RawHttpResponse =
     withContext(Dispatchers.IO) {
         val normalizedMethod = method.uppercase()
@@ -292,7 +287,7 @@ actual suspend fun httpRequestRaw(
                 status = response.code,
                 statusText = response.message,
                 url = response.request.url.toString(),
-                body = readResponseBodyLimited(response.body),
+                body = readResponseBodyLimited(response.body, maxResponseBodyBytes),
                 headers = response.headers.toMultimap().mapValues { (_, values) ->
                     values.joinToString(",")
                 }.mapKeys { (name, _) ->
