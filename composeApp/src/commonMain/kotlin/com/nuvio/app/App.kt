@@ -2247,6 +2247,20 @@ private fun MainAppContent(
                                             label = stringResource(Res.string.compose_nav_library),
                                         )
                                         NavItem(
+                                            selected = selectedTab == AppScreenTab.Iptv,
+                                            onClick = { handleRootTabClick(AppScreenTab.Iptv) },
+                                            icon = Icons.Filled.LiveTv,
+                                            contentDescription = "IPTV",
+                                            label = "IPTV",
+                                        )
+                                        NavItem(
+                                            selected = selectedTab == AppScreenTab.Sports,
+                                            onClick = { handleRootTabClick(AppScreenTab.Sports) },
+                                            icon = Res.drawable.sidebar_sports,
+                                            contentDescription = "Sports",
+                                            label = "Sports",
+                                        )
+                                        NavItem(
                                             selected = selectedTab == AppScreenTab.Settings,
                                             onClick = { handleRootTabClick(AppScreenTab.Settings) },
                                             label = stringResource(Res.string.compose_nav_profile),
