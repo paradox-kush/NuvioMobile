@@ -293,6 +293,9 @@ object RadarChannelMatcher {
         if (!match.channel.hasArchive || start > RadarTime.nowMs()) return null
         val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == match.channel.playlistId }
             ?: return null
+        // Timeshift/catch-up is an Xtream-only feature — there's no interface method for Stalker/M3U.
+        // Offering Replay for those would register a bogus fabricated URL, so skip it.
+        if (account.sourceType != com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM) return null
         val programme = match.programme
         val replayStart = programme?.startMs?.takeIf { it > 0 } ?: (start - 15 * 60 * 1000L)
         val durationMin = (((programme?.endMs ?: 0L) - (programme?.startMs ?: 0L)) / 60_000L)
@@ -354,7 +357,10 @@ object RadarChannelMatcher {
                         poster = item.poster,
                         categoryId = null,
                         rating = null,
-                        streamUrl = XtreamClient.movieStreamUrl(account, item.sid, item.ext ?: "mp4"),
+                        // Source-correct: Stalker returns "" so the play route resolves a fresh
+                        // create_link via resolveMovieUrl; Xtream returns the real URL.
+                        streamUrl = com.nuvio.app.features.iptv.IptvClient.forAccount(account)
+                            .movieStreamUrl(account, item.sid, item.ext ?: "mp4"),
                         tmdb = item.tmdb,
                         containerExtension = item.ext,
                     )
