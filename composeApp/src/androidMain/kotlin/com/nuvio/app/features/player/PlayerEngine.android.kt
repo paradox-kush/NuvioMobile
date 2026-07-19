@@ -1288,7 +1288,10 @@ private class NuvioLibmpvView(
         val ended = obsEofReached
         val seeking = obsSeeking
         val cacheBufferingState = obsCacheBufferingState
-        val durationMs = obsDurationMs
+        // Live streams: libmpv reports a finite demuxer-cache extent as "duration", which the
+        // shared controls would draw as a bounded VOD scrubber (capped at the cache window).
+        // Zero it to match ExoPlayer's TIME_UNSET->0 for live, so no finite timeline is built.
+        val durationMs = if (isLiveStream) 0L else obsDurationMs
         val positionMs = obsPositionMs
         val cachePositionMs = obsCachePositionMs
         val isCacheBuffering = cacheBufferingState != null && cacheBufferingState in 0 until 100

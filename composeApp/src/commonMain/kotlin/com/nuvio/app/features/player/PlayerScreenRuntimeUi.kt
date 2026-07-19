@@ -207,6 +207,8 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             metrics = metrics,
             resizeMode = resizeMode,
             isLocked = playerControlsLocked,
+            isLive = com.nuvio.app.features.streams.normalizeStreamType(activeStreamType) == "live" ||
+                contentType.equals("live", ignoreCase = true),
             showPlaybackControls = controlsVisible,
             onLockToggle = {
                 if (playerControlsLocked) unlockPlayerControls() else lockPlayerControls()
