@@ -378,7 +378,12 @@ object RadarChannelMatcher {
                 accountId = account.id,
                 kind = com.nuvio.app.features.iptv.XtreamKind.LIVE,
                 name = match.channel.name,
-                streamUrl = XtreamClient.liveStreamUrl(account, match.channel.streamId),
+                // Route through the source-correct client: Stalker/M3U return "" so the play
+                // route falls through to the async create_link resolver; Xtream returns the
+                // real URL. Hardcoding XtreamClient here fabricated a bogus URL for Stalker
+                // that skipped create_link and failed to load.
+                streamUrl = com.nuvio.app.features.iptv.IptvClient.forAccount(account)
+                    .liveStreamUrl(account, match.channel.streamId),
                 logo = match.channel.logo,
                 streamType = "live",
             )
