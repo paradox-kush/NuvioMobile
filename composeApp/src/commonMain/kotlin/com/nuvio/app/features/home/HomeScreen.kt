@@ -55,7 +55,6 @@ import com.nuvio.app.features.home.components.HomeHeroSection
 import com.nuvio.app.features.home.components.HomeSkeletonHero
 import com.nuvio.app.features.home.components.HomeSkeletonRow
 import com.nuvio.app.features.home.components.HomeContinueWatchingSectionBottomPadding
-import com.nuvio.app.features.home.components.ContinueWatchingLayout
 import com.nuvio.app.features.trakt.TRAKT_CONTINUE_WATCHING_DAYS_CAP_ALL
 import com.nuvio.app.features.trakt.TraktSettingsRepository
 import com.nuvio.app.features.trakt.WatchProgressSource
