@@ -182,6 +182,7 @@ import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.PlayerLaunchStore
+import com.nuvio.app.features.livetv.LiveTvScreen
 import com.nuvio.app.features.player.PlayerScreen
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.ExternalPlayerIntentResult
@@ -298,6 +299,7 @@ private val navigationSavedStateConfiguration = SavedStateConfiguration {
             subclass(StreamRoute::class, StreamRoute.serializer())
             subclass(CatalogRoute::class, CatalogRoute.serializer())
             subclass(PlayerRoute::class, PlayerRoute.serializer())
+            subclass(LiveTvRoute::class, LiveTvRoute.serializer())
         }
     }
 }
@@ -347,6 +349,10 @@ fun disposeRoute(route: AppRoute) {
             PlayerLaunchStore.remove(route.launchId)
         }
 
+        is LiveTvRoute -> {
+            PlayerLaunchStore.remove(route.launchId)
+        }
+
         is CatalogRoute -> {
             CatalogRepository.clear()
             CatalogLaunchStore.remove(route.launchId)
@@ -391,14 +397,16 @@ private fun AppScreenTab.toNativeNavigationTab(): NativeNavigationTab? = when (t
     AppScreenTab.Search -> NativeNavigationTab.Search
     AppScreenTab.Library -> NativeNavigationTab.Library
     AppScreenTab.Settings -> NativeNavigationTab.Settings
-    AppScreenTab.Iptv -> null
-    AppScreenTab.Sports -> null
+    AppScreenTab.Iptv -> NativeNavigationTab.Iptv
+    AppScreenTab.Sports -> NativeNavigationTab.Sports
 }
 
 private fun NativeNavigationTab.toAppScreenTab(): AppScreenTab = when (this) {
     NativeNavigationTab.Home -> AppScreenTab.Home
     NativeNavigationTab.Search -> AppScreenTab.Search
     NativeNavigationTab.Library -> AppScreenTab.Library
+    NativeNavigationTab.Iptv -> AppScreenTab.Iptv
+    NativeNavigationTab.Sports -> AppScreenTab.Sports
     NativeNavigationTab.Settings -> AppScreenTab.Settings
 }
 
@@ -446,7 +454,7 @@ fun App(
     onReplace: ((AppRoute) -> Unit)? = null,
     onActivate: ((AppScreenTab) -> Unit)? = null,
     onAppReady: ((Boolean) -> Unit)? = null,
-    onTabTitles: ((home: String, search: String, library: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
+    onTabTitles: ((home: String, search: String, library: String, iptv: String, sports: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
     nativeProfileSwitcherController: NativeProfileSwitcherController? = null,
 ) {
     setSingletonImageLoaderFactory { context ->
@@ -784,7 +792,7 @@ private fun MainAppContent(
     onGoBack: (() -> Unit)? = null,
     onReplace: ((AppRoute) -> Unit)? = null,
     onActivate: ((AppScreenTab) -> Unit)? = null,
-    onTabTitles: ((home: String, search: String, library: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
+    onTabTitles: ((home: String, search: String, library: String, iptv: String, sports: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
     nativeProfileSwitcherController: NativeProfileSwitcherController? = null,
     onRootContentReady: ((Boolean) -> Unit)? = null,
     onSwitchProfile: () -> Unit = {},
@@ -902,6 +910,8 @@ private fun MainAppContent(
     val nativeTabHomeTitle = stringResource(Res.string.compose_nav_home)
     val nativeTabSearchTitle = stringResource(Res.string.compose_nav_search)
     val nativeTabLibraryTitle = stringResource(Res.string.compose_nav_library)
+    val nativeTabIptvTitle = "IPTV"
+    val nativeTabSportsTitle = "Sports"
     val nativeTabProfileTitle = stringResource(Res.string.compose_nav_profile)
     val nativeSwitchProfileTitle = stringResource(Res.string.compose_settings_root_switch_profile_title)
     val nativeAddProfileTitle = stringResource(Res.string.compose_profile_add_profile)
@@ -983,6 +993,8 @@ private fun MainAppContent(
         nativeTabHomeTitle,
         nativeTabSearchTitle,
         nativeTabLibraryTitle,
+        nativeTabIptvTitle,
+        nativeTabSportsTitle,
         nativeTabProfileTitle,
         nativeSwitchProfileTitle,
         nativeAddProfileTitle,
@@ -992,12 +1004,16 @@ private fun MainAppContent(
             home = nativeTabHomeTitle,
             search = nativeTabSearchTitle,
             library = nativeTabLibraryTitle,
+            iptv = nativeTabIptvTitle,
+            sports = nativeTabSportsTitle,
             profile = nativeTabProfileTitle,
         )
         onTabTitles?.invoke(
             nativeTabHomeTitle,
             nativeTabSearchTitle,
             nativeTabLibraryTitle,
+            nativeTabIptvTitle,
+            nativeTabSportsTitle,
             nativeTabProfileTitle,
             nativeSwitchProfileTitle,
             nativeAddProfileTitle,
@@ -1278,27 +1294,24 @@ private fun MainAppContent(
     // failure falls back to the original URL, so playback never breaks. The DoH step is a network call,
     // so the whole launch runs on a coroutine (both call sites already tolerate async).
     fun launchLiveChannel(contentId: String, name: String, logo: String?, resolvedUrl: String) {
-        coroutineScope.launch {
-            val dnsProvider = XtreamItemRegistry.dnsProviderFor(contentId)
-            val playback = resolveLivePlaybackUrl(resolvedUrl, dnsProvider)
-            XtreamLiveRecents.record(contentId, name, logo)
-            val liveLaunch = PlayerLaunch(
-                profileId = activePlaybackProfileId,
-                title = name,
-                sourceUrl = playback.url,
-                sourceHeaders = playback.headers,
-                streamTitle = name,
-                streamType = "live",
-                providerName = XtreamItemRegistry.accountNameFor(contentId) ?: "IPTV",
-                providerAddonId = "xtream",
-                logo = logo,
-                contentType = "live",
-                videoId = contentId,
-                parentMetaId = contentId,
-                parentMetaType = "tv",
-            )
-            navController.navigate(PlayerRoute(launchId = PlayerLaunchStore.put(liveLaunch)))
-        }
+        // The new docked Live TV screen resolves + switches channels itself, so it only needs the
+        // channel identity. The URL is still resolved here so a placeholder payload is well-formed
+        // and the LiveTvScreen's own resolve step is warm.
+        val liveLaunch = PlayerLaunch(
+            profileId = activePlaybackProfileId,
+            title = name,
+            sourceUrl = resolvedUrl,
+            streamTitle = name,
+            streamType = "live",
+            providerName = XtreamItemRegistry.accountNameFor(contentId) ?: "IPTV",
+            providerAddonId = "xtream",
+            logo = logo,
+            contentType = "live",
+            videoId = contentId,
+            parentMetaId = contentId,
+            parentMetaType = "tv",
+        )
+        navController.navigate(LiveTvRoute(launchId = PlayerLaunchStore.put(liveLaunch)))
     }
 
     fun playLiveXtreamChannel(contentId: String, name: String, logo: String?, url: String?) {
@@ -3177,6 +3190,38 @@ private fun MainAppContent(
                         onOpenExternalUrl = { url ->
                             openExternalStreamUrl(url)
                         },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                entry<LiveTvRoute>(
+                    metadata = if (isIos) {
+                        NavDisplay.transitionSpec {
+                            fadeIn(animationSpec = tween(220)) togetherWith
+                                fadeOut(animationSpec = tween(220))
+                        } + NavDisplay.popTransitionSpec {
+                            fadeIn(animationSpec = tween(220)) togetherWith
+                                fadeOut(animationSpec = tween(220))
+                        }
+                    } else {
+                        emptyMap()
+                    },
+                ) { route ->
+                    val onBack = rememberGuardedPopBackStack(navController, route)
+                    val launch = remember(route.launchId) { PlayerLaunchStore.get(route.launchId) }
+                    if (launch?.videoId == null) {
+                        LaunchedEffect(route.launchId) { onBack() }
+                        Box(modifier = Modifier.fillMaxSize())
+                        return@entry
+                    }
+                    DisposableEffect(Unit) {
+                        IptvPlaybackGate.setPlaybackActive(true)
+                        onDispose { IptvPlaybackGate.setPlaybackActive(false) }
+                    }
+                    LiveTvScreen(
+                        initialContentId = launch.videoId,
+                        initialTitle = launch.title,
+                        initialLogo = launch.logo,
+                        onBack = onBack,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }

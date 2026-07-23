@@ -234,17 +234,25 @@ enum NuvioAppTab: String, CaseIterable, Hashable {
     case home = "Home"
     case search = "Search"
     case library = "Library"
+    case iptv = "Iptv"
+    case sports = "Sports"
     case settings = "Settings"
 
     var fallbackTitle: String {
         String(localized: String.LocalizationValue(rawValue))
     }
 
+    /// Tabs shown in the bottom bar. iOS only fits 5 before an overflow "More", so Profile/Settings
+    /// lives in the top-right avatar instead (see NativeNavContentView).
+    static var tabBarCases: [NuvioAppTab] { [.home, .search, .library, .iptv, .sports] }
+
     static func from(kotlinName: String?) -> NuvioAppTab? {
         switch kotlinName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "home": return .home
         case "search": return .search
         case "library": return .library
+        case "iptv": return .iptv
+        case "sports": return .sports
         case "settings", "profile": return .settings
         default: return nil
         }
@@ -255,6 +263,8 @@ enum NuvioAppTab: String, CaseIterable, Hashable {
         case .home: return "NuvioTabHome"
         case .search: return "NuvioTabSearch"
         case .library: return "NuvioTabLibrary"
+        case .iptv: return "NuvioTabIptv"
+        case .sports: return "NuvioTabSports"
         case .settings: return "NuvioTabProfile"
         }
     }
@@ -264,6 +274,8 @@ enum NuvioAppTab: String, CaseIterable, Hashable {
         case .home: return "house.fill"
         case .search: return "magnifyingglass"
         case .library: return "rectangle.stack.fill"
+        case .iptv: return "tv.fill"
+        case .sports: return "sportscourt.fill"
         case .settings: return "person.crop.circle.fill"
         }
     }
@@ -549,19 +561,33 @@ final class AppNavigationCoordinator: ObservableObject {
     let homeCoordinator = TabNavigationCoordinator()
     let searchCoordinator = TabNavigationCoordinator()
     let libraryCoordinator = TabNavigationCoordinator()
+    let iptvCoordinator = TabNavigationCoordinator()
+    let sportsCoordinator = TabNavigationCoordinator()
     let settingsCoordinator = TabNavigationCoordinator()
     let profileSwitcherController = NativeProfileSwitcherController()
     let profileTabInteraction = NativeProfileTabInteractionCoordinator()
+
+    private var childCoordinatorObservers: [AnyCancellable] = []
+
+    /// True when the active tab is at its root (no pushed full-screen route). Drives the top-right
+    /// profile avatar, which hides on pushed screens (player, live TV, detail) like the tab bar does.
+    var activeTabIsAtRoot: Bool {
+        coordinator(for: selectedTab).path.isEmpty
+    }
 
     init() {
         profileTabInteraction.onLongPress = { [weak self] in
             guard let self, self.isAppReady else { return }
             self.isProfileSwitcherPresented = true
         }
+        // Republish when any child coordinator's nav stack changes, so `activeTabIsAtRoot` stays live.
+        childCoordinatorObservers = allCoordinators.map { child in
+            child.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        }
     }
 
     private var allCoordinators: [TabNavigationCoordinator] {
-        [homeCoordinator, searchCoordinator, libraryCoordinator, settingsCoordinator]
+        [homeCoordinator, searchCoordinator, libraryCoordinator, iptvCoordinator, sportsCoordinator, settingsCoordinator]
     }
 
     func coordinator(for tab: NuvioAppTab) -> TabNavigationCoordinator {
@@ -569,6 +595,8 @@ final class AppNavigationCoordinator: ObservableObject {
         case .home: return homeCoordinator
         case .search: return searchCoordinator
         case .library: return libraryCoordinator
+        case .iptv: return iptvCoordinator
+        case .sports: return sportsCoordinator
         case .settings: return settingsCoordinator
         }
     }
@@ -588,6 +616,8 @@ final class AppNavigationCoordinator: ObservableObject {
         home: String,
         search: String,
         library: String,
+        iptv: String,
+        sports: String,
         profile: String,
         switchProfile: String,
         addProfile: String
@@ -596,6 +626,8 @@ final class AppNavigationCoordinator: ObservableObject {
             .home: home,
             .search: search,
             .library: library,
+            .iptv: iptv,
+            .sports: sports,
             .settings: profile,
         ]
         localizedSwitchProfileTitle = switchProfile
@@ -682,11 +714,13 @@ struct NativeNavComposeView: UIViewControllerRepresentable {
             onAppReady: { ready in
                 appCoordinator.updateAppReady(ready.boolValue)
             },
-            onTabTitles: { home, search, library, profile, switchProfile, addProfile in
+            onTabTitles: { home, search, library, iptv, sports, profile, switchProfile, addProfile in
                 appCoordinator.updateTabTitles(
                     home: home,
                     search: search,
                     library: library,
+                    iptv: iptv,
+                    sports: sports,
                     profile: profile,
                     switchProfile: switchProfile,
                     addProfile: addProfile
@@ -1161,6 +1195,8 @@ private struct NativeProfileSwitcherView: View {
 struct NativeNavContentView: View {
     @StateObject private var appCoordinator = AppNavigationCoordinator()
     @StateObject private var iconStore = NativeTabIconStore()
+    @State private var isSettingsPresented = false
+    @State private var tabBeforeSettings: NuvioAppTab = .home
 
     private var usesNativeTabBar: Bool {
         guard UIDevice.current.userInterfaceIdiom == .phone else {
@@ -1197,7 +1233,7 @@ struct NativeNavContentView: View {
 
     private var legacyTabs: some View {
         TabView(selection: tabSelection) {
-            ForEach(NuvioAppTab.allCases, id: \.self) { tab in
+            ForEach(NuvioAppTab.tabBarCases, id: \.self) { tab in
                 TabContentView(
                     tab: tab,
                     usesNativeTabBar: usesNativeTabBar,
@@ -1230,68 +1266,29 @@ struct NativeNavContentView: View {
     @available(iOS 26.0, *)
     private var nativeTabs: some View {
         TabView(selection: tabSelection) {
-            ForEach(NuvioAppTab.allCases, id: \.self) { tab in
-                if tab == .settings {
-                    Tab(value: tab) {
-                        TabContentView(
-                            tab: tab,
-                            usesNativeTabBar: usesNativeTabBar,
-                            usesTabletFloatingTabBar: usesTabletFloatingTabBar,
-                            coordinator: appCoordinator.coordinator(for: tab),
-                            appCoordinator: appCoordinator
+            ForEach(NuvioAppTab.tabBarCases, id: \.self) { tab in
+                Tab(value: tab) {
+                    TabContentView(
+                        tab: tab,
+                        usesNativeTabBar: usesNativeTabBar,
+                        usesTabletFloatingTabBar: usesTabletFloatingTabBar,
+                        coordinator: appCoordinator.coordinator(for: tab),
+                        appCoordinator: appCoordinator
+                    )
+                } label: {
+                    Label {
+                        Text(appCoordinator.title(for: tab))
+                    } icon: {
+                        Image(
+                            uiImage: iconStore.image(
+                                for: tab,
+                                selected: appCoordinator.selectedTab == tab
+                            )
                         )
-                    } label: {
-                        Label {
-                            Text(appCoordinator.title(for: tab))
-                        } icon: {
-                            Image(
-                                uiImage: iconStore.image(
-                                    for: tab,
-                                    selected: appCoordinator.selectedTab == tab
-                                )
-                            )
-                            .id(
-                                "\(tab.rawValue)-\(iconStore.revision)-" +
-                                    "\(appCoordinator.selectedTab == tab)"
-                            )
-                        }
-                    }
-                    .popover(
-                        isPresented: $appCoordinator.isProfileSwitcherPresented,
-                        attachmentAnchor: .rect(.bounds),
-                        arrowEdge: .bottom
-                    ) {
-                        NativeProfileSwitcherView(
-                            controller: appCoordinator.profileSwitcherController,
-                            title: appCoordinator.localizedSwitchProfileTitle,
-                            addProfileTitle: appCoordinator.localizedAddProfileTitle,
-                            onManageProfiles: appCoordinator.openProfileManagement
+                        .id(
+                            "\(tab.rawValue)-\(iconStore.revision)-" +
+                                "\(appCoordinator.selectedTab == tab)"
                         )
-                    }
-                } else {
-                    Tab(value: tab) {
-                        TabContentView(
-                            tab: tab,
-                            usesNativeTabBar: usesNativeTabBar,
-                            usesTabletFloatingTabBar: usesTabletFloatingTabBar,
-                            coordinator: appCoordinator.coordinator(for: tab),
-                            appCoordinator: appCoordinator
-                        )
-                    } label: {
-                        Label {
-                            Text(appCoordinator.title(for: tab))
-                        } icon: {
-                            Image(
-                                uiImage: iconStore.image(
-                                    for: tab,
-                                    selected: appCoordinator.selectedTab == tab
-                                )
-                            )
-                            .id(
-                                "\(tab.rawValue)-\(iconStore.revision)-" +
-                                    "\(appCoordinator.selectedTab == tab)"
-                            )
-                        }
                     }
                 }
             }
@@ -1301,11 +1298,102 @@ struct NativeNavContentView: View {
     }
 
     @ViewBuilder
-    var body: some View {
+    private var tabsContainer: some View {
         if #available(iOS 26.0, *), usesNativeTabBar {
             nativeTabs
         } else {
             legacyTabs
+        }
+    }
+
+    // Profile/Settings left the bottom bar (iOS fits only 5 tabs), so it lives as a top-right avatar.
+    // Tap opens Settings; long-press opens the quick profile switcher.
+    private var profileAvatarButton: some View {
+        Button {
+            tabBeforeSettings = appCoordinator.selectedTab
+            isSettingsPresented = true
+        } label: {
+            Image(uiImage: iconStore.image(for: .settings, selected: false))
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(appCoordinator.title(for: .settings))
+        .modifier(ProfileSwitcherPopoverModifier(appCoordinator: appCoordinator))
+    }
+
+    @ViewBuilder
+    private var settingsCover: some View {
+        ZStack(alignment: .topLeading) {
+            // usesNativeTabBar: true tells the embedded Compose app to hide its own bottom nav bar,
+            // so the cover shows only the Settings screen (no redundant tab bar).
+            TabContentView(
+                tab: .settings,
+                usesNativeTabBar: true,
+                usesTabletFloatingTabBar: usesTabletFloatingTabBar,
+                coordinator: appCoordinator.settingsCoordinator,
+                appCoordinator: appCoordinator
+            )
+            .ignoresSafeArea()
+
+            Button {
+                isSettingsPresented = false
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(.black.opacity(0.45), in: Circle())
+            }
+            .padding(.leading, 16)
+            .padding(.top, 6)
+        }
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            tabsContainer
+
+            if appCoordinator.isAppReady && appCoordinator.activeTabIsAtRoot {
+                profileAvatarButton
+                    .padding(.trailing, 16)
+                    .padding(.top, 4)
+            }
+        }
+        .fullScreenCover(isPresented: $isSettingsPresented, onDismiss: {
+            appCoordinator.selectedTab = tabBeforeSettings
+        }) {
+            settingsCover
+        }
+    }
+}
+
+// The quick profile switcher is an iOS 26 native affordance; on older iOS the avatar just opens
+// Settings (where profiles can also be switched), so the long-press popover is gated here.
+@available(iOS 16.0, *)
+private struct ProfileSwitcherPopoverModifier: ViewModifier {
+    @ObservedObject var appCoordinator: AppNavigationCoordinator
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                        appCoordinator.isProfileSwitcherPresented = true
+                    }
+                )
+                .popover(
+                    isPresented: $appCoordinator.isProfileSwitcherPresented,
+                    arrowEdge: .top
+                ) {
+                    NativeProfileSwitcherView(
+                        controller: appCoordinator.profileSwitcherController,
+                        title: appCoordinator.localizedSwitchProfileTitle,
+                        addProfileTitle: appCoordinator.localizedAddProfileTitle,
+                        onManageProfiles: appCoordinator.openProfileManagement
+                    )
+                }
+        } else {
+            content
         }
     }
 }

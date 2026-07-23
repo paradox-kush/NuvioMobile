@@ -3,6 +3,7 @@ import UserNotifications
 import ComposeApp
 
 private let lockPlayerToLandscapeNotification = Notification.Name("NuvioPlayerLockLandscape")
+private let lockPlayerToPortraitNotification = Notification.Name("NuvioPlayerLockPortrait")
 private let unlockPlayerOrientationNotification = Notification.Name("NuvioPlayerUnlockOrientation")
 
 final class OrientationLockAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
@@ -76,16 +77,24 @@ final class OrientationLockCoordinator {
             }
         )
         observers.append(
+            center.addObserver(forName: lockPlayerToPortraitNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.setForcedOrientation(.portrait, forceRotate: true)
+            }
+        )
+        observers.append(
             center.addObserver(forName: unlockPlayerOrientationNotification, object: nil, queue: .main) { [weak self] _ in
-                self?.setLandscapeLock(enabled: false)
+                self?.setForcedOrientation(.allButUpsideDown, forceRotate: false)
             }
         )
     }
 
     private func setLandscapeLock(enabled: Bool) {
-        let nextOrientations: UIInterfaceOrientationMask = enabled ? .landscape : .allButUpsideDown
-        supportedOrientations = nextOrientations
-        requestOrientationUpdate(for: nextOrientations, forceRotate: enabled)
+        setForcedOrientation(enabled ? .landscape : .allButUpsideDown, forceRotate: enabled)
+    }
+
+    private func setForcedOrientation(_ mask: UIInterfaceOrientationMask, forceRotate: Bool) {
+        supportedOrientations = mask
+        requestOrientationUpdate(for: mask, forceRotate: forceRotate)
     }
 
     private func requestOrientationUpdate(for mask: UIInterfaceOrientationMask, forceRotate: Bool) {
@@ -106,7 +115,10 @@ final class OrientationLockCoordinator {
                 }
         } else {
             if forceRotate {
-                UIDevice.current.setValue(preferredLandscapeOrientation.rawValue, forKey: "orientation")
+                let target: UIInterfaceOrientation = mask.contains(.portrait)
+                    ? .portrait
+                    : preferredLandscapeOrientation
+                UIDevice.current.setValue(target.rawValue, forKey: "orientation")
             } else if UIDevice.current.orientation.isPortrait {
                 UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
             }

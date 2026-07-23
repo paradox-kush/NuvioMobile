@@ -147,3 +147,18 @@ data class PlayerRoute(
     override val hidesNavigationBar: Boolean
         get() = true
 }
+
+/**
+ * The dedicated Live TV experience: a docked MPV surface with an EPG guide below it in portrait,
+ * that fills the screen when rotated to landscape (or via the fullscreen button). Distinct from
+ * [PlayerRoute] so the VOD/landscape-locked player stays untouched. Reuses [PlayerLaunchStore] for
+ * the initial channel payload; the screen resolves and switches channels in-place after that.
+ */
+@Serializable
+data class LiveTvRoute(
+    val launchId: Long,
+    override val title: String = "",
+) : AppRoute {
+    override val hidesNavigationBar: Boolean
+        get() = true
+}
